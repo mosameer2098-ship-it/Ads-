@@ -11,8 +11,16 @@ from telegram.ext import (
     ContextTypes,
 )
 
-from config import BOT_TOKEN, CHANNEL_USERNAME, ADMIN_ID, PREMIUM_PRICE
+from config import BOT_TOKEN, ADMIN_ID, PREMIUM_PRICE
 from database import init_db, save_user, is_premium
+
+
+# =========================================================
+# CHANNEL
+# =========================================================
+
+CHANNEL_USERNAME = "@iqra_music_support"
+CHANNEL_LINK = "https://t.me/iqra_music_support"
 
 
 # =========================================================
@@ -37,28 +45,32 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
-        self.wfile.write(b"Ads Premium Bot is running!")
+        self.wfile.write(
+            b"Ads Premium Bot is running!"
+        )
 
     def log_message(self, format, *args):
         return
 
 
 def start_health_server():
-    server = HTTPServer(("0.0.0.0", 10000), HealthHandler)
+
+    server = HTTPServer(
+        ("0.0.0.0", 10000),
+        HealthHandler,
+    )
+
     server.serve_forever()
 
 
 # =========================================================
-# CHANNEL CHECK
+# CHANNEL MEMBERSHIP CHECK
 # =========================================================
 
 async def check_channel_member(bot, user_id):
 
-    if not CHANNEL_USERNAME:
-        logger.warning("CHANNEL_USERNAME is empty.")
-        return False
-
     try:
+
         member = await bot.get_chat_member(
             chat_id=CHANNEL_USERNAME,
             user_id=user_id,
@@ -71,26 +83,26 @@ async def check_channel_member(bot, user_id):
         )
 
     except Exception as error:
+
         logger.error(
-            "Channel membership check failed: %s",
+            "Channel membership error: %s",
             error,
         )
+
         return False
 
 
 # =========================================================
-# JOIN CHANNEL
+# JOIN CHANNEL BUTTON
 # =========================================================
 
 def join_channel_keyboard():
-
-    username = CHANNEL_USERNAME.lstrip("@")
 
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(
                 "📢 Join Channel",
-                url=f"https://t.me/{username}",
+                url=CHANNEL_LINK,
             )
         ],
         [
@@ -102,15 +114,20 @@ def join_channel_keyboard():
     ])
 
 
+# =========================================================
+# JOIN SCREEN
+# =========================================================
+
 async def show_join_screen(update):
 
     text = (
         "📢 <b>Channel Join Required</b>\n\n"
         "Bot use karne ke liye pehle hamara channel "
         "join karein.\n\n"
-        "1️⃣ <b>Join Channel</b> par click karein.\n"
+        "1️⃣ <b>Join Channel</b> dabayein.\n"
         "2️⃣ Channel join karein.\n"
-        "3️⃣ <b>Verify Membership</b> dabayein."
+        "3️⃣ <b>Verify Membership</b> dabayein.\n\n"
+        "⚠️ Channel join kiye bina Dashboard open nahi hoga."
     )
 
     if update.callback_query:
@@ -209,17 +226,20 @@ async def show_dashboard(update):
 
 def user_has_premium(user_id):
 
-    # Admin ko automatic Premium
+    # Admin automatically Premium
     if user_id == ADMIN_ID:
         return True
 
     try:
         return is_premium(user_id)
+
     except Exception as error:
+
         logger.error(
             "Premium check error: %s",
             error,
         )
+
         return False
 
 
@@ -341,8 +361,7 @@ async def show_subscription(query):
         "💎 <b>Premium Subscription</b>\n\n"
         f"💰 Price: <b>₹{PREMIUM_PRICE}</b>\n"
         f"📊 Status: <b>{status}</b>\n\n"
-        "Payment verification module baad me "
-        "add kiya jayega."
+        "Payment verification module baad me add kiya jayega."
     )
 
     keyboard = [
@@ -402,16 +421,18 @@ async def start(
 
     save_user(user)
 
-    # Har user ko channel verification karni hogi
+    # Har user ko channel join karna hoga
     is_member = await check_channel_member(
         context.bot,
         user.id,
     )
 
     if not is_member:
+
         await show_join_screen(update)
         return
 
+    # Sirf verified member ko dashboard
     await show_dashboard(update)
 
 
@@ -431,9 +452,10 @@ async def callbacks(
     user_id = query.from_user.id
     action = query.data
 
-    # -----------------------------------------------------
+
+    # =====================================================
     # VERIFY CHANNEL
-    # -----------------------------------------------------
+    # =====================================================
 
     if action == "verify_channel":
 
@@ -445,44 +467,73 @@ async def callbacks(
         if not is_member:
 
             await query.answer(
-                "❌ Pehle channel join karein.",
+                "❌ Aapne abhi channel join nahi kiya.",
                 show_alert=True,
             )
 
+            # Join screen dobara dikhao
+            await query.edit_message_text(
+                "📢 <b>Channel Join Required</b>\n\n"
+                "Pehle channel join karein aur phir "
+                "Verify Membership dabayein.\n\n"
+                "⚠️ Dashboard verification ke baad hi open hoga.",
+                parse_mode="HTML",
+                reply_markup=join_channel_keyboard(),
+            )
+
+            return
+
+        await query.answer(
+            "✅ Membership verified!",
+            show_alert=False,
+        )
+
+        await show_dashboard(update)
+
+        return
+
+
+    # =====================================================
+    # DASHBOARD
+    # =====================================================
+
+    if action == "dashboard":
+
+        # Dashboard button se direct access ko bhi verify karo
+        is_member = await check_channel_member(
+            context.bot,
+            user_id,
+        )
+
+        if not is_member:
+
+            await show_join_screen(update)
             return
 
         await show_dashboard(update)
         return
 
-    # -----------------------------------------------------
-    # DASHBOARD
-    # -----------------------------------------------------
 
-    if action == "dashboard":
-
-        await show_dashboard(update)
-        return
-
-    # -----------------------------------------------------
+    # =====================================================
     # SUBSCRIPTION
-    # -----------------------------------------------------
+    # =====================================================
 
     if action == "subscription":
 
         await show_subscription(query)
         return
 
-    # -----------------------------------------------------
+
+    # =====================================================
     # BUY PREMIUM
-    # -----------------------------------------------------
+    # =====================================================
 
     if action == "buy_premium":
 
-        # Admin ko purchase screen ki zarurat nahi
         if user_id == ADMIN_ID:
 
             await query.answer(
-                "👑 Admin Premium Active hai.",
+                "👑 Admin Premium already active hai.",
                 show_alert=True,
             )
 
@@ -492,8 +543,7 @@ async def callbacks(
             f"💎 <b>Premium Subscription</b>\n\n"
             f"💰 Amount: <b>₹{PREMIUM_PRICE}</b>\n\n"
             "Payment system abhi setup phase me hai.\n\n"
-            "UPI QR aur automatic verification "
-            "baad me add karenge.",
+            "UPI QR aur automatic verification baad me add karenge.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
                 [
@@ -507,9 +557,10 @@ async def callbacks(
 
         return
 
-    # -----------------------------------------------------
+
+    # =====================================================
     # PREMIUM FEATURES
-    # -----------------------------------------------------
+    # =====================================================
 
     premium_features = {
         "login",
@@ -533,16 +584,16 @@ async def callbacks(
             if blocked:
                 return
 
-    # -----------------------------------------------------
+
+    # =====================================================
     # LOGIN
-    # -----------------------------------------------------
+    # =====================================================
 
     if action == "login":
 
         await query.edit_message_text(
             "🔐 <b>Telegram Account Login</b>\n\n"
-            "Multiple account login module next stage "
-            "me add kiya jayega.",
+            "Multiple account login module next stage me add kiya jayega.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
                 [
@@ -556,9 +607,10 @@ async def callbacks(
 
         return
 
-    # -----------------------------------------------------
+
+    # =====================================================
     # STATUS
-    # -----------------------------------------------------
+    # =====================================================
 
     if action == "status":
 
@@ -581,25 +633,26 @@ async def callbacks(
 
         return
 
-    # -----------------------------------------------------
+
+    # =====================================================
     # SETTINGS
-    # -----------------------------------------------------
+    # =====================================================
 
     if action == "settings":
 
         await show_settings(query)
         return
 
-    # -----------------------------------------------------
+
+    # =====================================================
     # ACCOUNT MANAGER
-    # -----------------------------------------------------
+    # =====================================================
 
     if action == "switch_account":
 
         await query.edit_message_text(
             "🔄 <b>Account Manager</b>\n\n"
-            "Multiple Telegram account module "
-            "next stage me add hoga.",
+            "Multiple Telegram account module next stage me add hoga.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
                 [
@@ -619,16 +672,16 @@ async def callbacks(
 
         return
 
-    # -----------------------------------------------------
+
+    # =====================================================
     # ADD ACCOUNT
-    # -----------------------------------------------------
+    # =====================================================
 
     if action == "add_account":
 
         await query.edit_message_text(
             "➕ <b>Add Telegram Account</b>\n\n"
-            "Account login module next stage me "
-            "add kiya jayega.",
+            "Account login module next stage me add kiya jayega.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
                 [
@@ -642,9 +695,10 @@ async def callbacks(
 
         return
 
-    # -----------------------------------------------------
+
+    # =====================================================
     # SETTINGS OPTIONS
-    # -----------------------------------------------------
+    # =====================================================
 
     setting_titles = {
         "select_channel": "📢 Select Channel",
@@ -659,8 +713,7 @@ async def callbacks(
 
         await query.edit_message_text(
             f"<b>{setting_titles[action]}</b>\n\n"
-            "Is setting ka detailed configuration "
-            "next module me add kiya jayega.",
+            "Is setting ka detailed configuration next module me add kiya jayega.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
                 [
@@ -674,20 +727,32 @@ async def callbacks(
 
         return
 
-    # -----------------------------------------------------
+
+    # =====================================================
     # HELP
-    # -----------------------------------------------------
+    # =====================================================
 
     if action == "help":
 
         await show_help(query)
         return
 
-    # -----------------------------------------------------
+
+    # =====================================================
     # REFRESH
-    # -----------------------------------------------------
+    # =====================================================
 
     if action == "refresh":
+
+        is_member = await check_channel_member(
+            context.bot,
+            user_id,
+        )
+
+        if not is_member:
+
+            await show_join_screen(update)
+            return
 
         await show_dashboard(update)
         return
@@ -773,39 +838,4 @@ async def run_bot():
         )
     )
 
-    application.add_handler(
-        CallbackQueryHandler(
-            callbacks,
-        )
-    )
-
-    application.add_error_handler(
-        error_handler
-    )
-
-    logger.info(
-        "🤖 Ads Premium Bot Started..."
-    )
-
-    await application.initialize()
-
-    await application.start()
-
-    await application.updater.start_polling(
-        allowed_updates=Update.ALL_TYPES
-    )
-
-    logger.info(
-        "✅ Telegram polling started successfully."
-    )
-
-    await asyncio.Event().wait()
-
-
-# =========================================================
-# MAIN
-# =========================================================
-
-if __name__ == "__main__":
-
-    asyncio.run(run_bot())
+   
