@@ -1,162 +1,113 @@
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
-DB_NAME = "bot.db"
-
-
-def get_connection():
-    return sqlite3.connect(DB_NAME)
-
+DB_NAME = "bot_database.db"
 
 def init_db():
-    conn = get_connection()
+    conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-
+    # Users table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
             username TEXT,
             first_name TEXT,
-            premium INTEGER DEFAULT 0,
-            premium_expiry TEXT,
-            verified INTEGER DEFAULT 0,
-            created_at TEXT
+            joined_date TEXT
         )
     """)
-
+    # Subscriptions table with 30-day validity tracking
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS account_slots (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            slot_number INTEGER NOT NULL,
-            status TEXT DEFAULT 'Not Connected',
-            created_at TEXT
+        CREATE TABLE IF NOT EXISTS subscriptions (
+            user_id INTEGER PRIMARY KEY,
+            expiry_date TEXT
         )
     """)
-
-    # Multiple Telegram Accounts (Userbots) ke session save karne ke liye table
+    # Sessions/Slots table for multi-account login (up to 20 slots per user)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS user_sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            phone_number TEXT NOT NULL,
-            session_string TEXT NOT NULL,
-            created_at TEXT
+            user_id INTEGER,
+            slot_number INTEGER,
+            phone TEXT,
+            session_string TEXT,
+            account_name TEXT,
+            account_id TEXT,
+            status TEXT DEFAULT 'Active'
         )
     """)
-
     conn.commit()
     conn.close()
-
 
 def save_user(user):
-    conn = get_connection()
+    conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-
-    cursor.execute("""
-        INSERT OR IGNORE INTO users
-        (user_id, username, first_name, created_at)
-        VALUES (?, ?, ?, ?)
-    """, (
-        user.id,
-        user.username or "",
-        user.first_name or "",
-        datetime.utcnow().isoformat(),
-    ))
-
-    cursor.execute("""
-        UPDATE users
-        SET username = ?, first_name = ?
-        WHERE user_id = ?
-    """, (
-        user.username or "",
-        user.first_name or "",
-        user.id,
-    ))
-
-    conn.commit()
+    cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user.id,))
+    if not cursor.fetchone():
+        cursor.execute(
+            "INSERT INTO users (user_id, username, first_name, joined_date) VALUES (?, ?, ?, ?)",
+            (user.id, user.username, user.first_name, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        )
+        conn.commit()
     conn.close()
-
-
-def get_user(user_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute(
-        "SELECT * FROM users WHERE user_id = ?",
-        (user_id,)
-    )
-
-    result = cursor.fetchone()
-    conn.close()
-
-    return result
-
 
 def is_premium(user_id):
-    user = get_user(user_id)
-
-    if not user:
-        return False
-
-    if user[3] != 1:
-        return False
-
-    expiry = user[4]
-
-    if expiry:
-        try:
-            expiry_date = datetime.fromisoformat(expiry)
-
-            if datetime.utcnow() > expiry_date:
-                conn = get_connection()
-                cursor = conn.cursor()
-
-                cursor.execute("""
-                    UPDATE users
-                    SET premium = 0
-                    WHERE user_id = ?
-                """, (user_id,))
-
-                conn.commit()
-                conn.close()
-
-                return False
-
-        except ValueError:
-            return False
-
-    return True
-
-
-# =========================================================
-# MULTI-ACCOUNT SESSION FUNCTIONS
-# =========================================================
-
-def save_user_session(user_id, phone_number, session_string):
-    conn = get_connection()
+    conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
+    cursor.execute("SELECT expiry_date FROM subscriptions WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        expiry_date = datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S")
+        if datetime.now() < expiry_date:
+            return True
+        else:
+            # Expired, remove from database
+            remove_subscription(user_id)
+    return False
+
+def add_subscription(user_id, days=30):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    expiry_date = datetime.now() + timedelta(days=days)
     cursor.execute("""
-        INSERT INTO user_sessions (user_id, phone_number, session_string, created_at)
-        VALUES (?, ?, ?, ?)
-    """, (
-        user_id,
-        phone_number,
-        session_string,
-        datetime.utcnow().isoformat(),
-    ))
+        INSERT INTO subscriptions (user_id, expiry_date) VALUES (?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET expiry_date = ?
+    """, (user_id, expiry_date.strftime("%Y-%m-%d %H:%M:%S"), expiry_date.strftime("%Y-%m-%d %H:%M:%S")))
     conn.commit()
     conn.close()
 
+def remove_subscription(user_id):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM subscriptions WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
 
 def get_user_sessions(user_id):
-    conn = get_connection()
+    conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT id, phone_number, created_at FROM user_sessions WHERE user_id = ?",
-        (user_id,)
-    )
+    cursor.execute("SELECT slot_number, phone, account_name, account_id, status FROM user_sessions WHERE user_id = ? ORDER BY slot_number", (user_id,))
     rows = cursor.fetchall()
     conn.close()
     return rows
+
+def save_user_session(user_id, phone, session_string, account_name="User", account_id="0"):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    # Find next available slot from 1 to 20
+    cursor.execute("SELECT slot_number FROM user_sessions WHERE user_id = ? ORDER BY slot_number", (user_id,))
+    existing_slots = [row[0] for row in cursor.fetchall()]
     
+    next_slot = 1
+    for i in range(1, 21):
+        if i not in existing_slots:
+            next_slot = i
+            break
+            
+    cursor.execute("""
+        INSERT INTO user_sessions (user_id, slot_number, phone, session_string, account_name, account_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (user_id, next_slot, phone, session_string, account_name, account_id))
+    conn.commit()
+    conn.close()
+    return next_slot
