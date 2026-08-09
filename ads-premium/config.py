@@ -5,12 +5,10 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
-# Tumhare Telegram channel ka username
-# Example: @mychannel
+# Pyrogram Credentials
+API_ID = 31497463
+API_HASH = "4184eadf303c31ea114ab8cbc3f02478"
+
 CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "")
-
-# Tumhari Telegram numeric ID
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-
-# Premium price
 PREMIUM_PRICE = 400
