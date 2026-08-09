@@ -49,7 +49,7 @@ def start_health_server():
 
 
 # =========================================================
-# CHANNEL MEMBERSHIP
+# CHANNEL CHECK
 # =========================================================
 
 async def check_channel_member(bot, user_id):
@@ -79,7 +79,7 @@ async def check_channel_member(bot, user_id):
 
 
 # =========================================================
-# JOIN CHANNEL SCREEN
+# JOIN CHANNEL
 # =========================================================
 
 def join_channel_keyboard():
@@ -109,8 +109,8 @@ async def show_join_screen(update):
         "Bot use karne ke liye pehle hamara channel "
         "join karein.\n\n"
         "1️⃣ <b>Join Channel</b> par click karein.\n"
-        "2️⃣ Channel join karne ke baad "
-        "<b>Verify Membership</b> dabayein."
+        "2️⃣ Channel join karein.\n"
+        "3️⃣ <b>Verify Membership</b> dabayein."
     )
 
     if update.callback_query:
@@ -204,10 +204,34 @@ async def show_dashboard(update):
 
 
 # =========================================================
+# PREMIUM CHECK
+# =========================================================
+
+def user_has_premium(user_id):
+
+    # Admin ko automatic Premium
+    if user_id == ADMIN_ID:
+        return True
+
+    try:
+        return is_premium(user_id)
+    except Exception as error:
+        logger.error(
+            "Premium check error: %s",
+            error,
+        )
+        return False
+
+
+# =========================================================
 # PREMIUM REQUIRED
 # =========================================================
 
 async def premium_required(query):
+
+    # Admin ko Premium ki zarurat nahi
+    if query.from_user.id == ADMIN_ID:
+        return False
 
     text = (
         "🔒 <b>Premium Required</b>\n\n"
@@ -225,7 +249,7 @@ async def premium_required(query):
         ],
         [
             InlineKeyboardButton(
-                "↩️ Back to Dashboard",
+                "↩️ Back",
                 callback_data="dashboard",
             )
         ],
@@ -236,6 +260,8 @@ async def premium_required(query):
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
+
+    return True
 
 
 # =========================================================
@@ -306,7 +332,7 @@ async def show_settings(query):
 
 async def show_subscription(query):
 
-    if is_premium(query.from_user.id):
+    if user_has_premium(query.from_user.id):
         status = "✅ Premium Active"
     else:
         status = "❌ Premium Not Active"
@@ -376,12 +402,7 @@ async def start(
 
     save_user(user)
 
-    # Admin ko direct dashboard
-    if user.id == ADMIN_ID:
-        await show_dashboard(update)
-        return
-
-    # Normal user ke liye channel verification
+    # Har user ko channel verification karni hogi
     is_member = await check_channel_member(
         context.bot,
         user.id,
@@ -395,7 +416,7 @@ async def start(
 
 
 # =========================================================
-# CALLBACK HANDLER
+# CALLBACKS
 # =========================================================
 
 async def callbacks(
@@ -457,6 +478,16 @@ async def callbacks(
 
     if action == "buy_premium":
 
+        # Admin ko purchase screen ki zarurat nahi
+        if user_id == ADMIN_ID:
+
+            await query.answer(
+                "👑 Admin Premium Active hai.",
+                show_alert=True,
+            )
+
+            return
+
         await query.edit_message_text(
             f"💎 <b>Premium Subscription</b>\n\n"
             f"💰 Amount: <b>₹{PREMIUM_PRICE}</b>\n\n"
@@ -495,10 +526,12 @@ async def callbacks(
 
     if action in premium_features:
 
-        if not is_premium(user_id):
+        if not user_has_premium(user_id):
 
-            await premium_required(query)
-            return
+            blocked = await premium_required(query)
+
+            if blocked:
+                return
 
     # -----------------------------------------------------
     # LOGIN
@@ -532,7 +565,7 @@ async def callbacks(
         await query.edit_message_text(
             "📊 <b>Status</b>\n\n"
             "🟢 Bot: Online\n"
-            "📢 Channel: Not configured\n"
+            "📢 Channel: Connected\n"
             "👥 Groups: Not configured\n"
             "⏱️ Posting: Not configured",
             parse_mode="HTML",
@@ -661,7 +694,7 @@ async def callbacks(
 
 
 # =========================================================
-# ADMIN COMMAND
+# ADMIN
 # =========================================================
 
 async def admin_command(
@@ -679,7 +712,8 @@ async def admin_command(
 
     await update.message.reply_text(
         "👑 <b>Admin Access</b>\n\n"
-        "Admin system next module me add hoga.",
+        "💎 Premium: Active\n"
+        "🟢 Bot: Online",
         parse_mode="HTML",
     )
 
@@ -700,7 +734,7 @@ async def error_handler(
 
 
 # =========================================================
-# BOT RUNNER
+# RUN BOT
 # =========================================================
 
 async def run_bot():
@@ -711,7 +745,6 @@ async def run_bot():
             "BOT_TOKEN environment variable missing."
         )
 
-    # Database initialize
     init_db()
 
     # Render health server
@@ -720,14 +753,12 @@ async def run_bot():
         daemon=True,
     ).start()
 
-    # Create Telegram application
     application = (
         Application.builder()
         .token(BOT_TOKEN)
         .build()
     )
 
-    # Handlers
     application.add_handler(
         CommandHandler(
             "start",
@@ -756,12 +787,10 @@ async def run_bot():
         "🤖 Ads Premium Bot Started..."
     )
 
-    # Start application
     await application.initialize()
 
     await application.start()
 
-    # Start Telegram polling
     await application.updater.start_polling(
         allowed_updates=Update.ALL_TYPES
     )
@@ -770,7 +799,6 @@ async def run_bot():
         "✅ Telegram polling started successfully."
     )
 
-    # Keep bot alive
     await asyncio.Event().wait()
 
 
