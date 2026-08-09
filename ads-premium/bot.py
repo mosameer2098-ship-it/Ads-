@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -48,7 +49,7 @@ def start_health_server():
 
 
 # =========================================================
-# CHANNEL CHECK
+# CHANNEL MEMBERSHIP
 # =========================================================
 
 async def check_channel_member(bot, user_id):
@@ -63,22 +64,25 @@ async def check_channel_member(bot, user_id):
             user_id=user_id,
         )
 
-        return member.status in [
+        return member.status in (
             "member",
             "administrator",
             "creator",
-        ]
+        )
 
     except Exception as error:
-        logger.error("Channel check error: %s", error)
+        logger.error(
+            "Channel membership check failed: %s",
+            error,
+        )
         return False
 
 
 # =========================================================
-# JOIN SCREEN
+# JOIN CHANNEL SCREEN
 # =========================================================
 
-def join_keyboard():
+def join_channel_keyboard():
 
     username = CHANNEL_USERNAME.lstrip("@")
 
@@ -104,22 +108,25 @@ async def show_join_screen(update):
         "📢 <b>Channel Join Required</b>\n\n"
         "Bot use karne ke liye pehle hamara channel "
         "join karein.\n\n"
-        "1️⃣ Join Channel dabayein\n"
-        "2️⃣ Channel join karein\n"
-        "3️⃣ Verify Membership dabayein"
+        "1️⃣ <b>Join Channel</b> par click karein.\n"
+        "2️⃣ Channel join karne ke baad "
+        "<b>Verify Membership</b> dabayein."
     )
 
     if update.callback_query:
+
         await update.callback_query.message.edit_text(
             text,
             parse_mode="HTML",
-            reply_markup=join_keyboard(),
+            reply_markup=join_channel_keyboard(),
         )
+
     else:
+
         await update.message.reply_text(
             text,
             parse_mode="HTML",
-            reply_markup=join_keyboard(),
+            reply_markup=join_channel_keyboard(),
         )
 
 
@@ -180,12 +187,15 @@ async def show_dashboard(update):
     )
 
     if update.callback_query:
+
         await update.callback_query.message.edit_text(
             text,
             parse_mode="HTML",
             reply_markup=dashboard_keyboard(),
         )
+
     else:
+
         await update.message.reply_text(
             text,
             parse_mode="HTML",
@@ -203,7 +213,7 @@ async def premium_required(query):
         "🔒 <b>Premium Required</b>\n\n"
         "Ye feature use karne ke liye Premium "
         "subscription required hai.\n\n"
-        f"💎 Price: <b>₹{PREMIUM_PRICE}</b>"
+        f"💎 Premium Price: <b>₹{PREMIUM_PRICE}</b>"
     )
 
     keyboard = [
@@ -215,7 +225,7 @@ async def premium_required(query):
         ],
         [
             InlineKeyboardButton(
-                "↩️ Back",
+                "↩️ Back to Dashboard",
                 callback_data="dashboard",
             )
         ],
@@ -283,7 +293,7 @@ def settings_keyboard():
 async def show_settings(query):
 
     await query.edit_message_text(
-        "⚙️ <b>Settings</b>\n\n"
+        "⚙️ <b>Settings Menu</b>\n\n"
         "Neeche se setting select karein.",
         parse_mode="HTML",
         reply_markup=settings_keyboard(),
@@ -296,17 +306,17 @@ async def show_settings(query):
 
 async def show_subscription(query):
 
-    status = (
-        "✅ Premium Active"
-        if is_premium(query.from_user.id)
-        else "❌ Premium Not Active"
-    )
+    if is_premium(query.from_user.id):
+        status = "✅ Premium Active"
+    else:
+        status = "❌ Premium Not Active"
 
     text = (
         "💎 <b>Premium Subscription</b>\n\n"
         f"💰 Price: <b>₹{PREMIUM_PRICE}</b>\n"
         f"📊 Status: <b>{status}</b>\n\n"
-        "Payment verification module baad me add kiya jayega."
+        "Payment verification module baad me "
+        "add kiya jayega."
     )
 
     keyboard = [
@@ -339,7 +349,8 @@ async def show_help(query):
 
     await query.edit_message_text(
         "❓ <b>Help Centre</b>\n\n"
-        "Bot use karne me problem aaye to admin se contact karein.",
+        "Bot use karne me problem aaye to admin se "
+        "contact karein.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup([
             [
@@ -356,17 +367,21 @@ async def show_help(query):
 # START
 # =========================================================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
 
     user = update.effective_user
 
     save_user(user)
 
-    # Admin ko channel verification ki zarurat nahi
+    # Admin ko direct dashboard
     if user.id == ADMIN_ID:
         await show_dashboard(update)
         return
 
+    # Normal user ke liye channel verification
     is_member = await check_channel_member(
         context.bot,
         user.id,
@@ -380,7 +395,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# CALLBACKS
+# CALLBACK HANDLER
 # =========================================================
 
 async def callbacks(
@@ -389,54 +404,62 @@ async def callbacks(
 ):
 
     query = update.callback_query
+
     await query.answer()
 
     user_id = query.from_user.id
     action = query.data
 
-    # -------------------------
-    # CHANNEL VERIFY
-    # -------------------------
+    # -----------------------------------------------------
+    # VERIFY CHANNEL
+    # -----------------------------------------------------
 
     if action == "verify_channel":
 
-        if not await check_channel_member(
+        is_member = await check_channel_member(
             context.bot,
             user_id,
-        ):
+        )
+
+        if not is_member:
+
             await query.answer(
                 "❌ Pehle channel join karein.",
                 show_alert=True,
             )
+
             return
 
         await show_dashboard(update)
         return
 
-    # -------------------------
+    # -----------------------------------------------------
     # DASHBOARD
-    # -------------------------
+    # -----------------------------------------------------
 
     if action == "dashboard":
+
         await show_dashboard(update)
         return
 
-    # -------------------------
+    # -----------------------------------------------------
     # SUBSCRIPTION
-    # -------------------------
+    # -----------------------------------------------------
 
     if action == "subscription":
+
         await show_subscription(query)
         return
 
-    # -------------------------
+    # -----------------------------------------------------
     # BUY PREMIUM
-    # -------------------------
+    # -----------------------------------------------------
 
     if action == "buy_premium":
 
         await query.edit_message_text(
-            f"💎 <b>Premium ₹{PREMIUM_PRICE}</b>\n\n"
+            f"💎 <b>Premium Subscription</b>\n\n"
+            f"💰 Amount: <b>₹{PREMIUM_PRICE}</b>\n\n"
             "Payment system abhi setup phase me hai.\n\n"
             "UPI QR aur automatic verification "
             "baad me add karenge.",
@@ -450,11 +473,12 @@ async def callbacks(
                 ]
             ]),
         )
+
         return
 
-    # -------------------------
+    # -----------------------------------------------------
     # PREMIUM FEATURES
-    # -------------------------
+    # -----------------------------------------------------
 
     premium_features = {
         "login",
@@ -472,12 +496,13 @@ async def callbacks(
     if action in premium_features:
 
         if not is_premium(user_id):
+
             await premium_required(query)
             return
 
-    # -------------------------
+    # -----------------------------------------------------
     # LOGIN
-    # -------------------------
+    # -----------------------------------------------------
 
     if action == "login":
 
@@ -495,11 +520,12 @@ async def callbacks(
                 ]
             ]),
         )
+
         return
 
-    # -------------------------
+    # -----------------------------------------------------
     # STATUS
-    # -------------------------
+    # -----------------------------------------------------
 
     if action == "status":
 
@@ -519,25 +545,28 @@ async def callbacks(
                 ]
             ]),
         )
+
         return
 
-    # -------------------------
+    # -----------------------------------------------------
     # SETTINGS
-    # -------------------------
+    # -----------------------------------------------------
 
     if action == "settings":
+
         await show_settings(query)
         return
 
-    # -------------------------
-    # ACCOUNT
-    # -------------------------
+    # -----------------------------------------------------
+    # ACCOUNT MANAGER
+    # -----------------------------------------------------
 
     if action == "switch_account":
 
         await query.edit_message_text(
             "🔄 <b>Account Manager</b>\n\n"
-            "Multiple account module next stage me add hoga.",
+            "Multiple Telegram account module "
+            "next stage me add hoga.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
                 [
@@ -554,17 +583,19 @@ async def callbacks(
                 ]
             ]),
         )
+
         return
 
-    # -------------------------
+    # -----------------------------------------------------
     # ADD ACCOUNT
-    # -------------------------
+    # -----------------------------------------------------
 
     if action == "add_account":
 
         await query.edit_message_text(
-            "➕ <b>Add Account</b>\n\n"
-            "Telegram account login module next stage me add hoga.",
+            "➕ <b>Add Telegram Account</b>\n\n"
+            "Account login module next stage me "
+            "add kiya jayega.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
                 [
@@ -575,26 +606,28 @@ async def callbacks(
                 ]
             ]),
         )
+
         return
 
-    # -------------------------
-    # SETTINGS ITEMS
-    # -------------------------
+    # -----------------------------------------------------
+    # SETTINGS OPTIONS
+    # -----------------------------------------------------
 
-    titles = {
+    setting_titles = {
         "select_channel": "📢 Select Channel",
         "select_groups": "👥 Select Groups",
-        "posting_interval": "⏱️ Posting Interval",
-        "group_delay": "🐢 Group Delay",
+        "posting_interval": "⏱️ Set Posting Interval",
+        "group_delay": "🐢 Set Group Delay",
         "auto_reply": "💬 Auto-Reply Settings",
         "logout": "🔓 Logout",
     }
 
-    if action in titles:
+    if action in setting_titles:
 
         await query.edit_message_text(
-            f"<b>{titles[action]}</b>\n\n"
-            "Iska detailed configuration next module me add hoga.",
+            f"<b>{setting_titles[action]}</b>\n\n"
+            "Is setting ka detailed configuration "
+            "next module me add kiya jayega.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
                 [
@@ -605,21 +638,24 @@ async def callbacks(
                 ]
             ]),
         )
+
         return
 
-    # -------------------------
+    # -----------------------------------------------------
     # HELP
-    # -------------------------
+    # -----------------------------------------------------
 
     if action == "help":
+
         await show_help(query)
         return
 
-    # -------------------------
+    # -----------------------------------------------------
     # REFRESH
-    # -------------------------
+    # -----------------------------------------------------
 
     if action == "refresh":
+
         await show_dashboard(update)
         return
 
@@ -638,6 +674,7 @@ async def admin_command(
         await update.message.reply_text(
             "❌ Admin access denied."
         )
+
         return
 
     await update.message.reply_text(
@@ -663,16 +700,18 @@ async def error_handler(
 
 
 # =========================================================
-# MAIN
+# BOT RUNNER
 # =========================================================
 
-def main():
+async def run_bot():
 
     if not BOT_TOKEN:
+
         raise ValueError(
             "BOT_TOKEN environment variable missing."
         )
 
+    # Database initialize
     init_db()
 
     # Render health server
@@ -681,34 +720,64 @@ def main():
         daemon=True,
     ).start()
 
+    # Create Telegram application
     application = (
         Application.builder()
         .token(BOT_TOKEN)
         .build()
     )
 
+    # Handlers
     application.add_handler(
-        CommandHandler("start", start)
+        CommandHandler(
+            "start",
+            start,
+        )
     )
 
     application.add_handler(
-        CommandHandler("admin", admin_command)
+        CommandHandler(
+            "admin",
+            admin_command,
+        )
     )
 
     application.add_handler(
-        CallbackQueryHandler(callbacks)
+        CallbackQueryHandler(
+            callbacks,
+        )
     )
 
     application.add_error_handler(
         error_handler
     )
 
-    logger.info("🤖 Ads Premium Bot Started...")
+    logger.info(
+        "🤖 Ads Premium Bot Started..."
+    )
 
-    application.run_polling(
+    # Start application
+    await application.initialize()
+
+    await application.start()
+
+    # Start Telegram polling
+    await application.updater.start_polling(
         allowed_updates=Update.ALL_TYPES
     )
 
+    logger.info(
+        "✅ Telegram polling started successfully."
+    )
+
+    # Keep bot alive
+    await asyncio.Event().wait()
+
+
+# =========================================================
+# MAIN
+# =========================================================
 
 if __name__ == "__main__":
-    main()
+
+    asyncio.run(run_bot())
