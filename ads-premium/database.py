@@ -34,6 +34,17 @@ def init_db():
         )
     """)
 
+    # Multiple Telegram Accounts (Userbots) ke session save karne ke liye table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            phone_number TEXT NOT NULL,
+            session_string TEXT NOT NULL,
+            created_at TEXT
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -116,3 +127,36 @@ def is_premium(user_id):
             return False
 
     return True
+
+
+# =========================================================
+# MULTI-ACCOUNT SESSION FUNCTIONS
+# =========================================================
+
+def save_user_session(user_id, phone_number, session_string):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO user_sessions (user_id, phone_number, session_string, created_at)
+        VALUES (?, ?, ?, ?)
+    """, (
+        user_id,
+        phone_number,
+        session_string,
+        datetime.utcnow().isoformat(),
+    ))
+    conn.commit()
+    conn.close()
+
+
+def get_user_sessions(user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, phone_number, created_at FROM user_sessions WHERE user_id = ?",
+        (user_id,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+    
