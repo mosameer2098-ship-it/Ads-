@@ -126,11 +126,25 @@ async def menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await show_dashboard(update)
 
+async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Admin access denied.")
+        return
+    
+    text = (
+        "👑 <b>Admin Access Panel</b>\n\n"
+        "💎 Premium: Active\n"
+        "🟢 Bot: Online\n\n"
+        "Use <code>/addsub &lt;user_id&gt;</code> to grant 30 days subscription."
+    )
+    await update.message.reply_text(text, parse_mode="HTML")
+
 # ADMIN COMMANDS FOR 30-DAY SUBSCRIPTION
 async def addsub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Aap admin nahi hain.")
+        await update.message.reply_text("❌ Admin access denied.")
         return
     
     args = context.args
@@ -148,7 +162,7 @@ async def addsub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def delsub_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Aap admin nahi hain.")
+        await update.message.reply_text("❌ Admin access denied.")
         return
     
     args = context.args
@@ -206,7 +220,7 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("➕ Add New Account", callback_data="add_account")],
             [InlineKeyboardButton("↩️ Back", callback_data="dashboard")]
         ]
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard_builder(keyboard))
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     if action == "status":
@@ -229,7 +243,7 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if sessions:
             details_text += "\n👤 <b>Logged-in Account Details:</b>\n"
             for row in sessions:
-                details_text += f"🆔 Slot {row[0]} | Phone: {row[1]} | Name: {row[2]}\n"
+                details_text += f"🆔 Slot {row[0]} | Phone: {row[1]} | Name: {row[2]} (ID: {row[3]})\n"
 
         keyboard = [
             [InlineKeyboardButton("⏹ Stop Slot", callback_data="dashboard")],
@@ -247,7 +261,7 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for i in range(1, 21):
             if i in connected_slots:
                 btn_text = f"🔴 {i}"
-                if i == 2:  # Active slot indicator example
+                if i == 2:
                     btn_text = f"👉 {i}"
             else:
                 btn_text = f"🟢 {i}"
@@ -343,9 +357,6 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-def keyboard_builder(kb):
-    return InlineKeyboardMarkup(kb)
-
 # LOGIN CONVERSATION HANDLER
 async def start_add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -392,7 +403,7 @@ async def receive_otp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone_code_hash = context.user_data.get('phone_code_hash')
 
     try:
-        signed_in = await client.sign_in(phone_number=phone, phone_code_hash=phone_code_hash, phone_code=otp)
+        await client.sign_in(phone_number=phone, phone_code_hash=phone_code_hash, phone_code=otp)
         session_string = await client.export_session_string()
         me = await client.get_me()
         acc_name = f"{me.first_name or ''} {me.last_name or ''}".strip()
@@ -478,6 +489,7 @@ def main():
     application.add_handler(login_handler)
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("menu", menu_cmd))
+    application.add_handler(CommandHandler("admin", admin_cmd))
     application.add_handler(CommandHandler("addsub", addsub_cmd))
     application.add_handler(CommandHandler("delsub", delsub_cmd))
     application.add_handler(CallbackQueryHandler(callbacks))
