@@ -9,10 +9,13 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
+    MessageHandler,
+    filters,
+    ConversationHandler,
 )
 
 from config import BOT_TOKEN, ADMIN_ID, PREMIUM_PRICE
-from database import init_db, save_user, is_premium
+from database import init_db, save_user, is_premium, save_user_session, get_user_sessions
 
 
 # =========================================================
@@ -33,6 +36,12 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+
+# =========================================================
+# CONVERSATION STATES FOR LOGIN
+# =========================================================
+PHONE, OTP, PASSWORD = range(3)
 
 
 # =========================================================
@@ -156,7 +165,7 @@ def dashboard_keyboard():
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(
-                "🔐 Login",
+                "🔐 Login / Add Accounts",
                 callback_data="login",
             )
         ],
@@ -226,7 +235,6 @@ async def show_dashboard(update):
 
 def user_has_premium(user_id):
 
-    # Admin automatically Premium
     if user_id == ADMIN_ID:
         return True
 
@@ -249,7 +257,6 @@ def user_has_premium(user_id):
 
 async def premium_required(query):
 
-    # Admin ko Premium ki zarurat nahi
     if query.from_user.id == ADMIN_ID:
         return False
 
@@ -421,7 +428,6 @@ async def start(
 
     save_user(user)
 
-    # Har user ko channel join karna hoga
     is_member = await check_channel_member(
         context.bot,
         user.id,
@@ -432,7 +438,6 @@ async def start(
         await show_join_screen(update)
         return
 
-    # Sirf verified member ko dashboard
     await show_dashboard(update)
 
 
@@ -453,10 +458,6 @@ async def callbacks(
     action = query.data
 
 
-    # =====================================================
-    # VERIFY CHANNEL
-    # =====================================================
-
     if action == "verify_channel":
 
         is_member = await check_channel_member(
@@ -471,12 +472,10 @@ async def callbacks(
                 show_alert=True,
             )
 
-            # Join screen dobara dikhao
             await query.edit_message_text(
                 "📢 <b>Channel Join Required</b>\n\n"
                 "Pehle channel join karein aur phir "
-                "Verify Membership dabayein.\n\n"
-                "⚠️ Dashboard verification ke baad hi open hoga.",
+                "Verify Membership dabayein.",
                 parse_mode="HTML",
                 reply_markup=join_channel_keyboard(),
             )
@@ -493,13 +492,8 @@ async def callbacks(
         return
 
 
-    # =====================================================
-    # DASHBOARD
-    # =====================================================
-
     if action == "dashboard":
 
-        # Dashboard button se direct access ko bhi verify karo
         is_member = await check_channel_member(
             context.bot,
             user_id,
@@ -514,19 +508,11 @@ async def callbacks(
         return
 
 
-    # =====================================================
-    # SUBSCRIPTION
-    # =====================================================
-
     if action == "subscription":
 
         await show_subscription(query)
         return
 
-
-    # =====================================================
-    # BUY PREMIUM
-    # =====================================================
 
     if action == "buy_premium":
 
@@ -542,8 +528,7 @@ async def callbacks(
         await query.edit_message_text(
             f"💎 <b>Premium Subscription</b>\n\n"
             f"💰 Amount: <b>₹{PREMIUM_PRICE}</b>\n\n"
-            "Payment system abhi setup phase me hai.\n\n"
-            "UPI QR aur automatic verification baad me add karenge.",
+            "Payment system abhi setup phase me hai.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
                 [
@@ -557,10 +542,6 @@ async def callbacks(
 
         return
 
-
-    # =====================================================
-    # PREMIUM FEATURES
-    # =====================================================
 
     premium_features = {
         "login",
@@ -585,41 +566,58 @@ async def callbacks(
                 return
 
 
-    # =====================================================
-    # LOGIN
-    # =====================================================
-
     if action == "login":
 
+        sessions = get_user_sessions(user_id)
+        count = len(sessions)
+
+        text = (
+            f"🔐 <b>Telegram Accounts Manager</b>\n\n"
+            f"📊 Total Logged-in Accounts: <b>{count} / 20</b>\n\n"
+            "Naya account add karne ke liye neeche click karein."
+        )
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "➕ Add New Account",
+                    callback_data="start_add_account",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "↩️ Back",
+                    callback_data="dashboard",
+                )
+            ]
+        ]
+
         await query.edit_message_text(
-            "🔐 <b>Telegram Account Login</b>\n\n"
-            "Multiple account login module next stage me add kiya jayega.",
+            text,
             parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(
-                        "↩️ Back",
-                        callback_data="dashboard",
-                    )
-                ]
-            ]),
+            reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
         return
 
 
-    # =====================================================
-    # STATUS
-    # =====================================================
+    if action == "start_add_account":
+
+        await query.message.reply_text(
+            "📱 Kripya apna Telegram account ka **Phone Number** country code ke sath bhejein (Jaise: `+919876543210`):",
+            parse_mode="HTML"
+        )
+        return
+
 
     if action == "status":
 
+        sessions = get_user_sessions(user_id)
+
         await query.edit_message_text(
-            "📊 <b>Status</b>\n\n"
-            "🟢 Bot: Online\n"
-            "📢 Channel: Connected\n"
-            "👥 Groups: Not configured\n"
-            "⏱️ Posting: Not configured",
+            f"📊 <b>Status & Accounts</b>\n\n"
+            f"🟢 Bot: Online\n"
+            f"📱 Connected Accounts: <b>{len(sessions)}</b>",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
                 [
@@ -633,10 +631,6 @@ async def callbacks(
 
         return
 
-
-    # =====================================================
-    # SETTINGS
-    # =====================================================
 
     if action == "settings":
 
@@ -644,21 +638,25 @@ async def callbacks(
         return
 
 
-    # =====================================================
-    # ACCOUNT MANAGER
-    # =====================================================
-
     if action == "switch_account":
 
+        sessions = get_user_sessions(user_id)
+
+        if not sessions:
+            text = "🔄 <b>Switch Account</b>\n\nAbhi koi account login nahi hai. Pehle Login section se account add karein."
+        else:
+            text = "🔄 <b>Your Logged-in Accounts:</b>\n\n"
+            for row in sessions:
+                text += f"🆔 ID: {row[0]} | 📱 {row[1]}\n"
+
         await query.edit_message_text(
-            "🔄 <b>Account Manager</b>\n\n"
-            "Multiple Telegram account module next stage me add hoga.",
+            text,
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton(
                         "➕ Add Account",
-                        callback_data="add_account",
+                        callback_data="login",
                     )
                 ],
                 [
@@ -672,33 +670,6 @@ async def callbacks(
 
         return
 
-
-    # =====================================================
-    # ADD ACCOUNT
-    # =====================================================
-
-    if action == "add_account":
-
-        await query.edit_message_text(
-            "➕ <b>Add Telegram Account</b>\n\n"
-            "Account login module next stage me add kiya jayega.",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(
-                        "↩️ Account Manager",
-                        callback_data="switch_account",
-                    )
-                ]
-            ]),
-        )
-
-        return
-
-
-    # =====================================================
-    # SETTINGS OPTIONS
-    # =====================================================
 
     setting_titles = {
         "select_channel": "📢 Select Channel",
@@ -728,19 +699,11 @@ async def callbacks(
         return
 
 
-    # =====================================================
-    # HELP
-    # =====================================================
-
     if action == "help":
 
         await show_help(query)
         return
 
-
-    # =====================================================
-    # REFRESH
-    # =====================================================
 
     if action == "refresh":
 
@@ -812,7 +775,6 @@ async def run_bot():
 
     init_db()
 
-    # Render health server
     threading.Thread(
         target=start_health_server,
         daemon=True,
@@ -838,4 +800,13 @@ async def run_bot():
         )
     )
 
-   
+    application.add_handler(
+        CallbackQueryHandler(
+            callbacks,
+        )
+    )
+
+    application.add_error_handler(error_handler)
+
+    print("Bot is starting...")
+    await application.run_polling()
