@@ -349,10 +349,11 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             channels = []
             async for dialog in client.iter_dialogs():
                 entity = dialog.entity
-                if dialog.is_group or getattr(entity, 'megagroup', False):
+                if (dialog.is_group or getattr(entity, 'megagroup', False)) and not getattr(entity, 'broadcast', False):
                     groups.append((dialog.id, dialog.name))
-                elif (dialog.is_channel and not getattr(entity, 'megagroup', False)) or getattr(entity, 'broadcast', False):
-                    channels.append((dialog.id, dialog.name))
+                elif getattr(entity, 'broadcast', False) and not getattr(entity, 'megagroup', False):
+                    if getattr(entity, 'creator', False) or getattr(entity, 'admin_rights', None) is not None:
+                        channels.append((dialog.id, dialog.name))
                     
             await client.disconnect()
             
@@ -365,7 +366,7 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text(
                 f"Login Successful in Slot {slot_number}! ({acc_name})\n\n"
                 f"• Real Groups Found: {len(groups)}\n"
-                f"• Real Channels Found: {len(channels)}\n\n"
+                f"• Creator/Admin Channels Found: {len(channels)}\n\n"
                 "Aap ab Settings mein jaakar apne groups aur channels select kar sakte hain!",
                 reply_markup=kb
             )
@@ -392,10 +393,11 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             channels = []
             async for dialog in client.iter_dialogs():
                 entity = dialog.entity
-                if dialog.is_group or getattr(entity, 'megagroup', False):
+                if (dialog.is_group or getattr(entity, 'megagroup', False)) and not getattr(entity, 'broadcast', False):
                     groups.append((dialog.id, dialog.name))
-                elif (dialog.is_channel and not getattr(entity, 'megagroup', False)) or getattr(entity, 'broadcast', False):
-                    channels.append((dialog.id, dialog.name))
+                elif getattr(entity, 'broadcast', False) and not getattr(entity, 'megagroup', False):
+                    if getattr(entity, 'creator', False) or getattr(entity, 'admin_rights', None) is not None:
+                        channels.append((dialog.id, dialog.name))
                     
             await client.disconnect()
             
@@ -408,7 +410,7 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text(
                 f"Login Successful in Slot {slot_number}! ({acc_name})\n\n"
                 f"• Real Groups Found: {len(groups)}\n"
-                f"• Real Channels Found: {len(channels)}\n\n"
+                f"• Creator/Admin Channels Found: {len(channels)}\n\n"
                 "Aap ab Settings mein jaakar apne groups aur channels select kar sakte hain!",
                 reply_markup=kb
             )
@@ -429,7 +431,7 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message_input))
     
-    print("Bot is running with final fixes...")
+    print("Bot is running with strict creator channel filter...")
     app.run_polling()
 
 if __name__ == "__main__":
