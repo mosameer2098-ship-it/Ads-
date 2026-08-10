@@ -1,10 +1,13 @@
-# Ads Premium Bot 🚀
+<h3 align="center"> — 「 <> Deploy On Heroku </> 」 — </h3>
 
-[![Deploy to Heroku](https://www.heroku.com/deploy/button.svg)](https://dashboard.heroku.com/new?template=https://github.com/mosameer2098-ship-it/Ads-)
+<p align="center">
+<a href="https://dashboard.heroku.com/new?template=https://github.com/mosameer2098-ship-it/Ads-">
+<img src="https://www.herokucdn.com/deploy/button.svg" alt="Deploy">
+</a>
+</p>
 
-### Features:
-* 📢 Channel & Group Management
-* ⏱️ Custom Time Interval Settings
-* 💎 Premium Subscription System (@AdsNova0)
-* 🤖 Auto-Reply Share Message (@Iqraxmusic_bot)
-* 
+### 🛠️ Quick Setup
+
+**1. Upgrade & Update:**
+```bash
+sudo apt-get update && sudo apt-get upgrade -y
