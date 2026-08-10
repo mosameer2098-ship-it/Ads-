@@ -5,7 +5,8 @@ def init_db():
     conn = sqlite3.connect("bot_database.db", check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT, is_premium INTEGER DEFAULT 0, expiry_date TEXT)")
-    cursor.execute("CREATE TABLE IF NOT EXISTS user_sessions (user_id INTEGER PRIMARY KEY, phone TEXT, session_string TEXT, account_name TEXT)")
+    # user_id aur phone combination primary key banaya hai taaki ek user multiple IDs login kar sake
+    cursor.execute("CREATE TABLE IF NOT EXISTS user_sessions (user_id INTEGER, phone TEXT, session_string TEXT, account_name TEXT, PRIMARY KEY (user_id, phone))")
     cursor.execute("CREATE TABLE IF NOT EXISTS bot_config (user_id INTEGER PRIMARY KEY, source_channel TEXT, time_interval INTEGER DEFAULT 30)")
     cursor.execute("CREATE TABLE IF NOT EXISTS user_groups (user_id INTEGER, group_id TEXT, group_name TEXT, is_selected INTEGER DEFAULT 0)")
     cursor.execute("CREATE TABLE IF NOT EXISTS user_channels (user_id INTEGER, channel_id TEXT, channel_name TEXT)")
@@ -65,45 +66,6 @@ def get_remaining_days(user_id):
             pass
     return 30
 
-def add_subscription_by_id(user_id, days=30):
-    expiry = (datetime.now() + timedelta(days=days)).strftime("%d-%m-%Y")
-    conn = sqlite3.connect("bot_database.db", check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
-    if not cursor.fetchone():
-        cursor.execute("INSERT INTO users (user_id, is_premium, expiry_date) VALUES (?, 1, ?)", (user_id, expiry))
-    else:
-        cursor.execute("UPDATE users SET is_premium = 1, expiry_date = ? WHERE user_id = ?", (expiry, user_id))
-    conn.commit()
-    conn.close()
-
-def remove_subscription_by_id(user_id):
-    conn = sqlite3.connect("bot_database.db", check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET is_premium = 0, expiry_date = NULL WHERE user_id = ?", (user_id,))
-    conn.commit()
-    conn.close()
-
-def get_all_premium_users():
-    conn = sqlite3.connect("bot_database.db", check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id, username, expiry_date FROM users WHERE is_premium = 1")
-    rows = cursor.fetchall()
-    conn.close()
-    
-    active_rows = []
-    for uid, uname, expiry in rows:
-        if expiry:
-            try:
-                exp_date = datetime.strptime(expiry, "%d-%m-%Y")
-                if datetime.now() > exp_date:
-                    remove_subscription_by_id(uid)
-                    continue
-            except:
-                pass
-        active_rows.append((uid, uname, expiry))
-    return active_rows
-
 def save_user_session(user_id, phone, session_string, account_name):
     conn = sqlite3.connect("bot_database.db", check_same_thread=False)
     cursor = conn.cursor()
@@ -112,27 +74,23 @@ def save_user_session(user_id, phone, session_string, account_name):
     conn.commit()
     conn.close()
 
-def get_user_session(user_id):
+def get_user_sessions(user_id):
     conn = sqlite3.connect("bot_database.db", check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute("SELECT phone, session_string, account_name FROM user_sessions WHERE user_id = ?", (user_id,))
-    row = cursor.fetchone()
+    cursor.execute("SELECT phone, account_name FROM user_sessions WHERE user_id = ?", (user_id,))
+    rows = cursor.fetchall()
     conn.close()
-    return row
+    return rows
 
 def save_real_groups_and_channels(user_id, groups, channels):
     conn = sqlite3.connect("bot_database.db", check_same_thread=False)
     cursor = conn.cursor()
-    
-    # Clear old data
     cursor.execute("DELETE FROM user_groups WHERE user_id = ?", (user_id,))
     cursor.execute("DELETE FROM user_channels WHERE user_id = ?", (user_id,))
     
-    # Insert real groups
     for g_id, g_name in groups:
         cursor.execute("INSERT INTO user_groups (user_id, group_id, group_name, is_selected) VALUES (?, ?, ?, 0)", (user_id, str(g_id), g_name))
         
-    # Insert real channels
     for c_id, c_name in channels:
         cursor.execute("INSERT INTO user_channels (user_id, channel_id, channel_name) VALUES (?, ?, ?)", (user_id, str(c_id), c_name))
         
