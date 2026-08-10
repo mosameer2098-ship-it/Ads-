@@ -8,7 +8,7 @@ from database import (init_db, save_user, is_premium, get_user_expiry, get_bot_c
                       set_source_channel, set_time_interval, get_user_groups, 
                       toggle_group_selection, set_all_groups_selection, get_user_channels, 
                       get_remaining_days, get_active_slot, set_active_slot, 
-                      get_slot_session, remove_user_session, set_slot_stopped,
+                      get_slot_session, get_user_sessions, remove_user_session, set_slot_stopped,
                       add_premium_subscription, remove_premium_subscription,
                       get_custom_share_message, check_referral_eligibility, claim_referral_reward)
 
@@ -312,10 +312,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(sub_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
-    # Updated Referral Info & Clear Share Message
     if data == "referral_info":
         ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
-        # Ab share karne par message ke andar clearly likha hoga ki 2 din ka free trial milega
         share_text = f"🎁 Is link se AdsNova Pro Bot ko start karo aur 2 din bilkul free mein bot test karo! 👇\n{ref_link}"
         share_url = f"https://t.me/share/url?url={ref_link}&text={share_text}"
         
@@ -407,7 +405,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "logout_acc":
         active_slot = get_active_slot(user_id)
         remove_user_session(user_id, active_slot)
-        await query.edit_message_text(f"🚪 Slot {slot_num} Logged Out!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
+        await query.edit_message_text(f"🚪 Slot {active_slot} Logged Out!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
 
     elif data == "settings":
         keyboard = [
