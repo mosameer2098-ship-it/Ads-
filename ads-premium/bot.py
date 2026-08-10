@@ -1,7 +1,7 @@
-import logging
+   import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler
-from database import init_db, save_user, is_premium, get_bot_config, set_source_channel, set_time_interval, add_subscription_by_id, remove_subscription_by_id
+from database import init_db, save_user, is_premium, get_user_expiry, get_bot_config, set_source_channel, set_time_interval, add_subscription_by_id, remove_subscription_by_id, get_all_premium_users
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 BOT_TOKEN = "8999765663:AAHOS2-3WUrXjDYQIE_5NQhe1e7SHFTyGY"
@@ -19,7 +19,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("💎 Subscription", callback_data="subscription"), InlineKeyboardButton("❓ Help", callback_data="help")],
         [InlineKeyboardButton("🔄 Switch Account", callback_data="switch_acc"), InlineKeyboardButton("🔄 Refresh", callback_data="refresh")]
     ]
-    await update.message.reply_text(f"🏠 **Main Dashboard**\n\nYour Telegram ID: `{user.id}`\nNeeche se koi option select karein.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    await update.message.reply_text(f"🏠 **Main Dashboard**\n\nNeeche se koi option select karein.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -27,14 +27,33 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Aapke paas Admin access nahi hai!")
         return
 
+    prem_users = get_all_premium_users()
     admin_text = (
-        "👑 **Admin Panel**\n\n"
-        "Kisi user ko premium dene ke liye command use karein:\n"
-        "👉 `/add <user_id>` (Jaise: `/add 123456789`)\n\n"
-        "Kisi user ka premium hatane ke liye:\n"
-        "👉 `/remove <user_id>` (Jaise: `/remove 123456789`)"
+        f"👑 **Admin Panel**\n\n"
+        f"• Total Active Premium Users: `{len(prem_users)}`\n\n"
+        "Commands:\n"
+        "👉 `/add <user_id>` - Premium dene ke liye\n"
+        "👉 `/remove <user_id>` - Premium hatane ke liye\n"
+        "👉 `/listpremium` - Sabhi premium users ki list dekhne ke liye"
     )
     await update.message.reply_text(admin_text, parse_mode="Markdown")
+
+async def list_premium_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("❌ Aapke paas Admin access nahi hai!")
+        return
+
+    prem_users = get_all_premium_users()
+    if notprem := not prem_users:
+        await update.message.reply_text("ℹ️ Filhal koi bhi active premium user nahi hai.")
+        return
+
+    text = "💎 **Active Premium Users List:**\n\n"
+    for uid, uname, expiry in prem_users:
+        text += f"• ID: `{uid}` | Username: @{uname or 'None'} | Expiry: {expiry}\n"
+    
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 async def add_prem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -45,8 +64,8 @@ async def add_prem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args:
         try:
             target_id = int(context.args[0])
-            add_subscription_by_id(target_id)
-            await update.message.reply_text(f"✅ Success! User `{target_id}` ko **Premium Subscription** de di gayi hai.", parse_mode="Markdown")
+            add_subscription_by_id(target_id, days=30)
+            await update.message.reply_text(f"✅ Success! User `{target_id}` ko 30 Dino ke liye **Premium Subscription** de di gayi hai.", parse_mode="Markdown")
         except ValueError:
             await update.message.reply_text("❌ Galat User ID! Kripya sahi number dalein.")
     else:
@@ -150,7 +169,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(status_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]), parse_mode="Markdown")
 
     elif data == "subscription":
-        sub_text = "💎 **Premium Subscription**\n\nUnlock unlimited features!\nTo buy subscription, contact admin here: **@AdsNova0**"
+        if is_premium(user_id):
+            expiry = get_user_expiry(user_id)
+            sub_text = f"💎 **Your Premium Subscription**\n\nStatus: **Active ✅**\nExpiry Date: **{expiry}**\n\nAapke paas sabhi features unlocked hain!"
+        else:
+            sub_text = "💎 **Premium Subscription**\n\nUnlock unlimited features!\nTo buy subscription, contact admin here: **@AdsNova0**"
+        
         await query.edit_message_text(sub_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]), parse_mode="Markdown")
 
     elif data == "help":
@@ -165,6 +189,7 @@ def main():
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_command))
+    app.add_handler(CommandHandler("listpremium", list_premium_cmd))
     app.add_handler(CommandHandler("add", add_prem_cmd))
     app.add_handler(CommandHandler("remove", remove_prem_cmd))
     app.add_handler(CallbackQueryHandler(button_handler))
@@ -174,4 +199,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-        
+     
