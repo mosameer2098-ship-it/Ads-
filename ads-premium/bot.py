@@ -82,7 +82,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 referrer_id = int(arg.split("_")[1])
                 if referrer_id != user.id:
-                    # Check if this user is eligible to give referral bonus (One-time only)
                     if check_referral_eligibility(user.id):
                         claim_referral_reward(user.id)
                         try:
@@ -313,20 +312,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(sub_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
-    # Referral Info & Link Button
+    # Referral Info & Direct Share Button
     if data == "referral_info":
         ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
-        ref_text = (
+        share_text = f"🚀 AdsNova Pro Bot ko use karo aur automatic ad forwarding ka anand lo! Yahan click karke start karein: {ref_link}"
+        share_url = f"https://t.me/share/url?url={ref_link}&text={share_text}"
+        
+        ref_msg = (
             "🎁 **Free Trial Referral System** 🎁\n\n"
             "Aap apna yeh unique referral link doston ke sath share karein:\n"
             f"`{ref_link}`\n\n"
-            "⚠️ **Rule:** Koi bhi naya user jab is link se bot start karega, toh use **2 din ka free trial** mil jayega!\n"
-            "*(Note: Ek user ko zindagi mein sirf ek hi baar referral trial mil sakta hai.)*"
+            "💡 **Rule:** 2 din is bot ko test kar sakte ho, ager pasand aaye to subscription buy kro!"
         )
+        keyboard = [
+            [InlineKeyboardButton("🚀 Share Link Now", url=share_url)],
+            [InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]
+        ]
         await query.edit_message_text(
-            ref_text, 
+            ref_msg, 
             parse_mode="Markdown", 
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]])
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
 
