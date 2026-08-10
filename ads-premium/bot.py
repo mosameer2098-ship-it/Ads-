@@ -115,7 +115,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(admin_text, parse_mode="Markdown", reply_markup=reply_markup)
         return
 
-    # 📊 NORMAL USER STATUS (Aapka bilkul purana secure logic)
+    # 📊 NORMAL USER STATUS
     config = get_bot_config(user_id)
     chan = config[0] if config and config[0] else "Auto-Detect (Active)"
     t_int = config[1] if config else 30
@@ -265,6 +265,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "status":
         await status_command(update, context)
+
+    elif data == "subscription":
+        sub_status = "Active ✅" if is_premium(user_id) else "Inactive ❌"
+        sub_text = (
+            "💎 **Subscription Status & Details** 💎\n\n"
+            f"🌟 Your Subscription: {sub_status}\n\n"
+            "Agar aapko apna subscription plan active ya extend karwana hai, toh kripya Bot Admin se sampark karein."
+        )
+        await query.edit_message_text(
+            sub_text, 
+            parse_mode="Markdown", 
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]])
+        )
 
     elif data == "switch_acc":
         sessions = get_user_sessions(user_id)
