@@ -1,19 +1,26 @@
 import os
+import asyncio
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
+from telethon import TelegramClient
+from telethon.sessions import StringSession
 from database import (init_db, save_user, is_premium, get_user_expiry, get_bot_config, 
                       set_source_channel, set_time_interval, add_subscription_by_id, 
                       remove_subscription_by_id, get_all_premium_users, get_user_groups, 
                       toggle_group_selection, set_all_groups_selection, get_user_channels, 
-                      get_remaining_days)
+                      get_remaining_days, save_user_session, get_user_session, save_real_groups_and_channels)
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# Token hamesha environment variable se aayega (Secure for Public Repo)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-
 ADMIN_IDS = [8453975447]
+
+# Temporary memory for interactive login flow (API ID & Hash for telethon login)
+API_ID = 6 // Apni Telegram API ID yahan dalein (default public test id ya apni my.telegram.org wali)
+API_HASH = "eb06d4abfb49dc3eeb1aeb98ae0f581e"
+
+user_login_state = {} # user_id -> {"step": "phone/otp/password", "phone": "...", "client": client, "phone_hash": "..."}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -27,80 +34,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await update.message.reply_text(f"🏠 **Main Dashboard**\n\nNeeche se koi option select karein.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
-async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id not in ADMIN_IDS:
-        await update.message.reply_text("❌ Aapke paas Admin access nahi hai!")
-        return
-
-    prem_users = get_all_premium_users()
-    admin_text = (
-        f"👑 **Admin Panel**\n\n"
-        f"• Total Active Premium Users: `{len(prem_users)}`\n\n"
-        "Commands:\n"
-        "👉 `/add <user_id>` - Premium dene ke liye\n"
-        "👉 `/remove <user_id>` - Premium hatane ke liye\n"
-        "👉 `/listpremium` - Sabhi premium users ki list dekhne ke liye"
-    )
-    await update.message.reply_text(admin_text, parse_mode="Markdown")
-
-async def list_premium_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id not in ADMIN_IDS:
-        await update.message.reply_text("❌ Aapke paas Admin access nahi hai!")
-        return
-
-    prem_users = get_all_premium_users()
-    if not prem_users:
-        await update.message.reply_text("ℹ️ Filhal koi bhi active premium user nahi hai.")
-        return
-
-    text = "💎 **Active Premium Users List:**\n\n"
-    for uid, uname, expiry in prem_users:
-        rem_days = get_remaining_days(uid)
-        text += f"• ID: `{uid}` | Username: @{uname or 'None'} | Expiry: {expiry} ({rem_days} days left)\n"
-    
-    await update.message.reply_text(text, parse_mode="Markdown")
-
-async def add_prem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id not in ADMIN_IDS:
-        await update.message.reply_text("❌ Aapke paas Admin access nahi hai!")
-        return
-
-    if context.args:
-        try:
-            target_id = int(context.args[0])
-            add_subscription_by_id(target_id, days=30)
-            await update.message.reply_text(f"✅ Success! User `{target_id}` ko 30 Dino ke liye **Premium Subscription** de di gayi hai.", parse_mode="Markdown")
-        except ValueError:
-            await update.message.reply_text("❌ Galat User ID! Kripya sahi number dalein.")
-    else:
-        await update.message.reply_text("⚠️ Istamal karne ka tarika: `/add <user_id>`", parse_mode="Markdown")
-
-async def remove_prem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id not in ADMIN_IDS:
-        await update.message.reply_text("❌ Aapke paas Admin access nahi hai!")
-        return
-
-    if context.args:
-        try:
-            target_id = int(context.args[0])
-            remove_subscription_by_id(target_id)
-            await update.message.reply_text(f"⚠️ User `{target_id}` ki **Premium Subscription** hata di gayi hai.", parse_mode="Markdown")
-        except ValueError:
-            await update.message.reply_text("❌ Galat User ID!")
-    else:
-        await update.message.reply_text("⚠️ Istamal karne ka tarika: `/remove <user_id>`", parse_mode="Markdown")
-
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
     user_id = query.from_user.id
 
-    if data == "settings":
+    if data == "login_acc":
+        user_login_state[user_id] = {"step": "waiting_phone"}
+        await query.edit_message_text(
+            "📱 **Telegram Account Login**\n\nKripya apna **Phone Number** country code ke sath bhejein (Jaise: `+919876543210`):",
+            parse_mode="Markdown"
+        )
+
+    elif data == "settings":
         keyboard = [
             [InlineKeyboardButton("1️⃣ Source Channel Setup", callback_data="opt_1")],
             [InlineKeyboardButton("2️⃣ Auto Forward to Groups", callback_data="opt_2")],
@@ -111,16 +58,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("⚙️ **Settings Menu**\n\nAap apni zaroorat ke mutabiq option chun sakte hain:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif data == "main_menu":
+        user_login_state.pop(user_id, None)
         keyboard = [
             [InlineKeyboardButton("🔑 Login / Add Accounts", callback_data="login_acc")],
             [InlineKeyboardButton("📊 Status", callback_data="status"), InlineKeyboardButton("⚙️ Settings", callback_data="settings")],
             [InlineKeyboardButton("💎 Subscription", callback_data="subscription"), InlineKeyboardButton("❓ Help", callback_data="help")],
             [InlineKeyboardButton("🔄 Switch Account", callback_data="switch_acc"), InlineKeyboardButton("🔄 Refresh", callback_data="refresh")]
         ]
-        await query.edit_message_text("🏠 **Main Dashboard**\n\nNeeche se koi option select karein.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await query.edit_message_text(f"🏠 **Main Dashboard**\n\nNeeche se koi option select karein.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif data == "opt_1" or data.startswith("set_chan_sel_"):
         channels = get_user_channels(user_id)
+        if not channels:
+            await query.edit_message_text("❌ Aapke account mein koi channel nahi mila!\n\n**Plz join the group and forward your message**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]), parse_mode="Markdown")
+            return
+
         if data.startswith("set_chan_sel_"):
             c_name = data.split("_", 3)[3]
             set_source_channel(user_id, c_name)
@@ -137,8 +89,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "opt_2" or data.startswith("grp_page_") or data.startswith("grp_tog_") or data == "grp_select_all" or data == "grp_deselect_all" or data == "grp_done":
         groups = get_user_groups(user_id)
+        if not groups:
+            await query.edit_message_text("❌ Aapke account mein koi group nahi mila!\n\n**Plz join the group and forward your message**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]), parse_mode="Markdown")
+            return
+
         total_groups = len(groups)
-        
         page = 0
         if data.startswith("grp_page_"):
             page = int(data.split("_")[2])
@@ -231,8 +186,127 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "help":
         await query.edit_message_text("❓ **Help & Guide**\n\nAapko support @AdsNova0 par milegi.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]), parse_mode="Markdown")
 
-    elif data in ["login_acc", "switch_acc", "refresh"]:
-        await query.edit_message_text("🔄 Process executed successfully!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]), parse_mode="Markdown")
+    elif data in ["switch_acc", "refresh"]:
+        session = get_user_session(user_id)
+        if session:
+            try:
+                client = TelegramClient(StringSession(session[1]), API_ID, API_HASH)
+                await client.connect()
+                groups = []
+                channels = []
+                async for dialog in client.iter_dialogs():
+                    if dialog.is_group:
+                        groups.append((dialog.id, dialog.name))
+                    elif dialog.is_channel:
+                        channels.append((dialog.id, dialog.name))
+                await client.disconnect()
+                save_real_groups_and_channels(user_id, groups, channels)
+                await query.edit_message_text(f"🔄 **Refreshed Successfully!**\nFound {len(groups)} groups and {len(channels)} channels from your account.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]), parse_mode="Markdown")
+            except Exception as e:
+                await query.edit_message_text(f"❌ Refresh failed: {e}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]), parse_mode="Markdown")
+        else:
+            await query.edit_message_text("❌ Pehle apni ID login karein (`Login / Add Accounts`).", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]), parse_mode="Markdown")
+
+# Handle interactive login inputs (Phone, OTP, Password)
+async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
+    
+    if user_id not in user_login_state:
+        return
+        
+    state = user_login_state[user_id]
+    step = state.get("step")
+    
+    if step == "waiting_phone":
+        phone = text
+        client = TelegramClient(StringSession(), API_ID, API_HASH)
+        await client.connect()
+        try:
+            sent = await client.send_code_request(phone)
+            state["phone"] = phone
+            state["client"] = client
+            state["phone_code_hash"] = sent.phone_code_hash
+            state["step"] = "waiting_otp"
+            await update.message.reply_text("📨 OTP bhej diya gaya hai! Kripya woh **OTP** yahan enter karein (agar number ke beech space ho toh hata kar dalein, e.g., `1 2 3 4 5` ki jagah `12345`):")
+        except Exception as e:
+            await client.disconnect()
+            user_login_state.pop(user_id, None)
+            await update.message.reply_text(f"❌ Error: {e}\n\nDobara koshish karne ke liye /start dabayein.")
+            
+    elif step == "waiting_otp":
+        otp = text.replace(" ", "")
+        client = state["client"]
+        phone = state["phone"]
+        phone_code_hash = state["phone_code_hash"]
+        
+        try:
+            await client.sign_in(phone=phone, code=otp, phone_code_hash=phone_code_hash)
+            # Login successful! Fetch real groups and channels
+            session_str = client.session.save()
+            me = await client.get_me()
+            acc_name = f"{me.first_name or ''} {me.last_name or ''}".strip()
+            
+            groups = []
+            channels = []
+            async for dialog in client.iter_dialogs():
+                if dialog.is_group:
+                    groups.append((dialog.id, dialog.name))
+                elif dialog.is_channel:
+                    channels.append((dialog.id, dialog.name))
+                    
+            await client.disconnect()
+            
+            save_user_session(user_id, phone, session_str, acc_name)
+            save_real_groups_and_channels(user_id, groups, channels)
+            user_login_state.pop(user_id, None)
+            
+            if not groups and not channels:
+                await update.message.reply_text("✅ Login Successful, lekin aapke account mein koi group ya channel nahi mila!\n\n**Plz join the group and forward your message**")
+            else:
+                await update.message.reply_text(f"✅ **Login Successful! ({acc_name})**\n\n• Real Groups Found: `{len(groups)}`\n• Real Channels Found: `{len(channels)}`\n\nAap ab Settings mein jaakar apne groups aur channels dekh sakte hain!", parse_mode="Markdown")
+                
+        except Exception as e:
+            if "Password" in str(e) or "two-step" in str(e).lower():
+                state["step"] = "waiting_password"
+                await update.message.reply_text("🔒 Aapke account par **Two-Step Verification (Password)** laga hai. Kripya apna cloud password enter karein:")
+            else:
+                await client.disconnect()
+                user_login_state.pop(user_id, None)
+                await update.message.reply_text(f"❌ Login Failed: {e}\n\nDobara koshish karne ke liye /start dabayein.")
+                
+    elif step == "waiting_password":
+        password = text
+        client = state["client"]
+        try:
+            await client.sign_in(password=password)
+            session_str = client.session.save()
+            me = await client.get_me()
+            acc_name = f"{me.first_name or ''} {me.last_name or ''}".strip()
+            
+            groups = []
+            channels = []
+            async for dialog in client.iter_dialogs():
+                if dialog.is_group:
+                    groups.append((dialog.id, dialog.name))
+                elif dialog.is_channel:
+                    channels.append((dialog.id, dialog.name))
+                    
+            await client.disconnect()
+            
+            save_user_session(user_id, state["phone"], session_str, acc_name)
+            save_real_groups_and_channels(user_id, groups, channels)
+            user_login_state.pop(user_id, None)
+            
+            if not groups and not channels:
+                await update.message.reply_text("✅ Login Successful, lekin aapke account mein koi group ya channel nahi mila!\n\n**Plz join the group and forward your message**")
+            else:
+                await update.message.reply_text(f"✅ **Login Successful! ({acc_name})**\n\n• Real Groups Found: `{len(groups)}`\n• Real Channels Found: `{len(channels)}`\n\nAap ab Settings mein jaakar apne groups aur channels dekh sakte hain!", parse_mode="Markdown")
+                
+        except Exception as e:
+            await client.disconnect()
+            user_login_state.pop(user_id, None)
+            await update.message.reply_text(f"❌ Password Incorrect: {e}\n\nDobara koshish karne ke liye /start dabayein.")
 
 def main():
     if not BOT_TOKEN:
@@ -242,13 +316,10 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("admin", admin_command))
-    app.add_handler(CommandHandler("listpremium", list_premium_cmd))
-    app.add_handler(CommandHandler("add", add_prem_cmd))
-    app.add_handler(CommandHandler("remove", remove_prem_cmd))
     app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message_input))
     
-    print("Bot is running successfully...")
+    print("Bot is running successfully with Interactive Login & Real Groups...")
     app.run_polling()
 
 if __name__ == "__main__":
