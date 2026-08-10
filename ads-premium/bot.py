@@ -331,7 +331,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await start(update, context)
             
         except Exception as e:
-            if "SessionPasswordNeeded" in str(e):
+            err_str = str(e)
+            # Broader check for 2FA / Two-step verification password requirement
+            if "SessionPasswordNeeded" in err_str or "password" in err_str.lower() or "Two-steps verification" in err_str:
                 state["step"] = "waiting_password"
                 await update.message.reply_text("🔒 Aapke account par 2-Step Verification (Password) laga hua hai. Apna password yahan bhejein:")
             else:
@@ -612,8 +614,6 @@ def main():
     application.add_handler(CommandHandler("broadcast", broadcast_command))
     
     application.add_handler(CallbackQueryHandler(button_handler))
-    
-    # Message handler for phone number, OTP and password input during login
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     loop = asyncio.get_event_loop()
