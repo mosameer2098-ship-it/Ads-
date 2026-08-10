@@ -8,6 +8,7 @@ def init_db():
     cursor.execute("CREATE TABLE IF NOT EXISTS user_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, slot_num INTEGER, phone TEXT, session_string TEXT, account_name TEXT, account_id TEXT)")
     cursor.execute("CREATE TABLE IF NOT EXISTS bot_config (user_id INTEGER PRIMARY KEY, source_channel TEXT, time_interval INTEGER DEFAULT 30)")
     cursor.execute("CREATE TABLE IF NOT EXISTS user_groups (user_id INTEGER, group_id TEXT, group_name TEXT, is_selected INTEGER DEFAULT 0)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS user_channels (user_id INTEGER, channel_id TEXT, channel_name TEXT)")
     conn.commit()
     conn.close()
 
@@ -80,7 +81,7 @@ def get_bot_config(user_id):
     cursor.execute("SELECT source_channel, time_interval FROM bot_config WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
     conn.close()
-    return row if row else ("Promotion Channel", 30)
+    return row if row else ("Not Set", 30)
 
 def set_source_channel(user_id, channel):
     conn = sqlite3.connect("bot_database.db", check_same_thread=False)
@@ -92,17 +93,31 @@ def set_source_channel(user_id, channel):
 def set_time_interval(user_id, interval):
     conn = sqlite3.connect("bot_database.db", check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO bot_config (user_id, source_channel, time_interval) VALUES (?, COALESCE((SELECT source_channel FROM bot_config WHERE user_id = ?), 'Promotion Channel'), ?)", (user_id, user_id, interval))
+    cursor.execute("INSERT OR REPLACE INTO bot_config (user_id, source_channel, time_interval) VALUES (?, COALESCE((SELECT source_channel FROM bot_config WHERE user_id = ?), 'Not Set'), ?)", (user_id, user_id, interval))
     conn.commit()
     conn.close()
+
+def get_user_channels(user_id):
+    conn = sqlite3.connect("bot_database.db", check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM user_channels WHERE user_id = ?", (user_id,))
+    if cursor.fetchone()[0] == 0:
+        # Sample channels matching screenshot for demo
+        sample_chans = [("c_1", "DELHI FRIENDSHIP (free)"), ("c_2", "Live couple show"), ("c_3", "Permotion")]
+        for cid, cname in sample_chans:
+            cursor.execute("INSERT INTO user_channels (user_id, channel_id, channel_name) VALUES (?, ?, ?)", (user_id, cid, cname))
+        conn.commit()
+    
+    cursor.execute("SELECT channel_id, channel_name FROM user_channels WHERE user_id = ?", (user_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
 
 def get_user_groups(user_id):
     conn = sqlite3.connect("bot_database.db", check_same_thread=False)
     cursor = conn.cursor()
-    # Dummy sync / fetch for demo if empty
     cursor.execute("SELECT COUNT(*) FROM user_groups WHERE user_id = ?", (user_id,))
     if cursor.fetchone()[0] == 0:
-        # Sample 25 groups for testing pagination like screenshot
         for i in range(1, 26):
             cursor.execute("INSERT INTO user_groups (user_id, group_id, group_name, is_selected) VALUES (?, ?, ?, 0)", (user_id, f"g_{i}", f"Promotion Group {i}"))
         conn.commit()
@@ -129,4 +144,3 @@ def set_all_groups_selection(user_id, select_state):
     cursor.execute("UPDATE user_groups SET is_selected = ? WHERE user_id = ?", (select_state, user_id))
     conn.commit()
     conn.close()
-    
