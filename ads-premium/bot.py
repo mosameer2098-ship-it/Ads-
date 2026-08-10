@@ -150,15 +150,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "opt_1" or data.startswith("set_chan_sel_"):
         channels = get_user_channels(user_id)
         if not channels:
-            await query.edit_message_text("❌ Aapke account mein koi channel nahi mila!\n\nPlz join the channel and forward your message", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
+            await query.edit_message_text(
+                "❌ Aapke account mein koi channel nahi mila!\n\nPlz join the channel and forward your message", 
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]])
+            )
             return
 
         if data.startswith("set_chan_sel_"):
-            # Format: set_chan_sel_<index>
             idx = int(data.split("_")[3])
             c_name = channels[idx][1]
             set_source_channel(user_id, c_name)
-            await query.edit_message_text(f"✅ Source Channel Successfully Set to '{c_name}'!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
+            await query.edit_message_text(
+                f"✅ Source Channel Successfully Set to '{c_name}'!", 
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]])
+            )
             return
 
         keyboard = []
@@ -349,8 +354,9 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
                 if dialog.is_group or dialog.is_supergroup:
                     groups.append((dialog.id, dialog.name))
                 elif dialog.is_channel:
-                    # Channels aur Supergroups dono ko check karke capture karenge
-                    channels.append((dialog.id, dialog.name))
+                    # STRICT CHECK: Ensure it is an actual broadcast channel (not a supergroup)
+                    if not getattr(dialog.entity, 'megagroup', False):
+                        channels.append((dialog.id, dialog.name))
                     
             await client.disconnect()
             
@@ -393,7 +399,8 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
                 if dialog.is_group or dialog.is_supergroup:
                     groups.append((dialog.id, dialog.name))
                 elif dialog.is_channel:
-                    channels.append((dialog.id, dialog.name))
+                    if not getattr(dialog.entity, 'megaggroup', False):
+                        channels.append((dialog.id, dialog.name))
                     
             await client.disconnect()
             
@@ -405,7 +412,7 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             kb = await get_main_keyboard(user_id)
             await update.message.reply_text(
                 f"✅ **Login Successful in Slot {slot_number}! ({acc_name})**\n\n"
-                f"• Real Groups Found: `{len(groups)}`\n"
+                f"• Real Groups Found: `{len(groups)}`\n`"
                 f"• Real Channels Found: `{len(channels)}`\n\n"
                 "Aap ab Settings mein jaakar apne groups aur channels select kar sakte hain!",
                 reply_markup=kb,
@@ -428,7 +435,7 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message_input))
     
-    print("Bot is running successfully with channel selection fix...")
+    print("Bot is running with exact channel filtering fix...")
     app.run_polling()
 
 if __name__ == "__main__":
