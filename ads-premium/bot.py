@@ -495,6 +495,68 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             user_login_state.pop(user_id, None)
             await update.message.reply_text(f"❌ Password Incorrect: {e}\n\nDobara koshish karne ke liye /start dabayein.")
 
+async def background_forwarder():
+    """Background task jo logged-in user session ke zariye source channel se messages utha kar groups mein forward karega."""
+    while True:
+        try:
+            import sqlite3
+            conn = sqlite3.connect("bot_database.db", check_same_thread=False)
+            cursor = conn.cursor()
+            
+            # Saare active user sessions nikalte hain
+            cursor.execute("SELECT user_id, slot_number, session_string, is_stopped FROM user_sessions WHERE is_stopped = 0")
+            sessions = cursor.fetchall()
+            
+            for user_id, slot_number, session_str, is_stopped in sessions:
+                if is_stopped:
+                    continue
+                
+                # User config check karte hain (Source channel aur time interval)
+                cursor.execute("SELECT source_channel, time_interval FROM bot_config WHERE user_id = ?", (user_id,))
+                config = cursor.fetchone()
+                if not config or not config[0]:
+                    continue
+                
+                source_chan = config[0]
+                interval = config[1] or 30
+                
+                # Selected groups nikalte hain
+                cursor.execute("SELECT group_id FROM user_groups WHERE user_id = ? AND is_selected = 1", (user_id,))
+                selected_groups = [row[0] for row in cursor.fetchall()]
+                
+                if not selected_groups:
+                    continue
+                
+                # Telethon client start karte hain user session ke sath
+                client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
+                await client.connect()
+                
+                if not await client.is_user_authorized():
+                    await client.disconnect()
+                    continue
+                
+                try:
+                    # Source channel se latest message fetch karte hain
+                    async for message in client.iter_messages(source_chan, limit=1):
+                        for g_id in selected_groups:
+                            try:
+                                target_id = int(g_id) if g_id.lstrip('-').isdigit() else g_id
+                                await client.forward_messages(target_id, message)
+                                await asyncio.sleep(2) # Floodwait se bachne ke liye delay
+                            except Exception as fe:
+                                logging.error(f"Forward error to group {g_id}: {fe}")
+                        break # Sirf latest message forward karega ek baar mein
+                except Exception as ce:
+                    logging.error(f"Channel fetch error: {ce}")
+                    
+                await client.disconnect()
+                
+            conn.close()
+        except Exception as ex:
+            logging.error(f"Background forwarder error: {ex}")
+            
+        await asyncio.sleep(60) # Har 1 minute baad check karega
+
 def main():
     if not BOT_TOKEN:
         print("❌ Error: BOT_TOKEN environment variable set nahi hai!")
@@ -516,10 +578,12 @@ def main():
     
     async def post_init(application):
         await set_bot_commands(application)
+        # Background forwarder loop start karte hain
+        asyncio.create_task(background_forwarder())
         
     app.post_init = post_init
     
-    print("Bot is running perfectly...")
+    print("Bot is running with auto-forwarding engine...")
     app.run_polling()
 
 if __name__ == "__main__":
