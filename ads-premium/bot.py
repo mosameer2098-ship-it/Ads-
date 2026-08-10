@@ -508,7 +508,10 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message_input))
     
-    app.job_queue.run_once(lambda context: asyncio.create_task(set_bot_commands(app)), 1)
+    async def post_init(application):
+        await set_bot_commands(application)
+        
+    app.post_init = post_init
     
     print("Bot is running perfectly...")
     app.run_polling()
