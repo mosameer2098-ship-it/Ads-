@@ -7,11 +7,10 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Callb
 from database import (init_db, save_user, is_premium, get_user_expiry, get_bot_config, 
                       set_source_channel, set_time_interval, get_user_groups, 
                       toggle_group_selection, set_all_groups_selection, get_user_channels, 
-                      get_remaining_days, save_user_session, get_user_sessions, 
-                      get_active_slot, set_active_slot, 
+                      get_remaining_days, get_active_slot, set_active_slot, 
                       get_slot_session, remove_user_session, set_slot_stopped,
                       add_premium_subscription, remove_premium_subscription,
-                      get_custom_share_message)
+                      get_custom_share_message, check_referral_eligibility, claim_referral_reward)
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
@@ -40,7 +39,6 @@ async def check_channel_membership(user_id, context):
         pass
     return False
 
-# --- PREMIUM CHECK FOR BUTTONS ---
 def check_user_access(user_id):
     if user_id == ADMIN_ID:
         return True
@@ -58,7 +56,7 @@ async def get_main_keyboard(user_id):
         keyboard.append([InlineKeyboardButton(f"🛑 Stop Slot {active_slot}", callback_data=f"stop_slot_{active_slot}"), InlineKeyboardButton("🚪 Logout", callback_data="logout_acc")])
         
     keyboard.append([InlineKeyboardButton("📊 Status", callback_data="status"), InlineKeyboardButton("⚙️ Settings", callback_data="settings")])
-    keyboard.append([InlineKeyboardButton("💎 Subscription", callback_data="subscription"), InlineKeyboardButton("💡 Help", callback_data="help")])
+    keyboard.append([InlineKeyboardButton("💎 Subscription", callback_data="subscription"), InlineKeyboardButton("🎁 Free Trial (Referral)", callback_data="referral_info")])
     keyboard.append([InlineKeyboardButton(f"🔄 Switch Account (Slot {active_slot})", callback_data="switch_acc")])
     keyboard.append([InlineKeyboardButton("✨ Refresh", callback_data="refresh"), InlineKeyboardButton("🛠️ Help Centre", callback_data="help_centre")])
     return InlineKeyboardMarkup(keyboard)
@@ -77,6 +75,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     save_user(user)
     
+    # Check Referral Parameter
+    if context.args:
+        arg = context.args[0]
+        if arg.startswith("ref_"):
+            try:
+                referrer_id = int(arg.split("_")[1])
+                if referrer_id != user.id:
+                    # Check if this user is eligible to give referral bonus (One-time only)
+                    if check_referral_eligibility(user.id):
+                        claim_referral_reward(user.id)
+                        try:
+                            await context.bot.send_message(
+                                chat_id=user.id, 
+                                text="🎁 **Badhai ho!** Referral link se join karne par aapko **2 din ka Free Trial** mil gaya hai!"
+                            )
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
     is_joined = await check_channel_membership(user.id, context)
     if not is_joined:
         join_text = (
@@ -295,8 +313,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(sub_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
-    # Help aur Help Centre ke liye handler
-    if data == "help" or data == "help_centre":
+    # Referral Info & Link Button
+    if data == "referral_info":
+        ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
+        ref_text = (
+            "🎁 **Free Trial Referral System** 🎁\n\n"
+            "Aap apna yeh unique referral link doston ke sath share karein:\n"
+            f"`{ref_link}`\n\n"
+            "⚠️ **Rule:** Koi bhi naya user jab is link se bot start karega, toh use **2 din ka free trial** mil jayega!\n"
+            "*(Note: Ek user ko zindagi mein sirf ek hi baar referral trial mil sakta hai.)*"
+        )
+        await query.edit_message_text(
+            ref_text, 
+            parse_mode="Markdown", 
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]])
+        )
+        return
+
+    if data == "help_centre":
         help_text = (
             "💡 **AdsNova Pro - Help & Guide** 💡\n\n"
             "1️⃣ **Login / Add Accounts:** Apne Telegram account ka session connect karne ke liye iska use karein.\n"
@@ -312,12 +346,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Refresh button ke liye handler
     if data == "refresh":
         await start(update, context)
         return
 
-    # Baaki sabhi buttons ke liye Non-Premium Restriction Check
     if not check_user_access(user_id):
         text = "❌ **Subscription Required!**\nAapka subscription active nahi hai. Bot ke features use karne ke liye pehle plan buy karein."
         kb = InlineKeyboardMarkup([
