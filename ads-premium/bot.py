@@ -6,7 +6,7 @@ from database import init_db, save_user, is_premium, get_bot_config, set_source_
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 BOT_TOKEN = "8999765663:AAHOS2-3WUrXjDYQIE_5NQhe1e7SHFTyGY"
 
-# Aapki Admin ID set kar di gayi hai
+# Aapki Admin ID
 ADMIN_IDS = [8453975447]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -174,3 +174,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+        
