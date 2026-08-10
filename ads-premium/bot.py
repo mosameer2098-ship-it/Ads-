@@ -3,7 +3,9 @@ import asyncio
 import logging
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
+from telethon import TelegramClient
+from telethon.sessions import StringSession
 from database import (init_db, save_user, is_premium, get_user_expiry, get_bot_config, 
                       set_source_channel, set_time_interval, get_user_groups, 
                       toggle_group_selection, set_all_groups_selection, get_user_channels, 
@@ -50,7 +52,6 @@ async def get_main_keyboard(user_id):
     is_stopped = slot_info[3] if slot_info else 0
     
     keyboard = []
-    # Slot control buttons (Stop / Restart / Logout)
     if slot_info:
         if is_stopped:
             keyboard.append([InlineKeyboardButton(f"🟢 Start Slot {active_slot}", callback_data=f"start_slot_{active_slot}"), InlineKeyboardButton("🚪 Logout", callback_data="logout_acc")])
@@ -79,7 +80,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     save_user(user)
     
-    # Check Referral Parameter
     if context.args:
         arg = context.args[0]
         if arg.startswith("ref_"):
@@ -273,6 +273,102 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception: continue
     await update.message.reply_text("✅ Broadcast complete!")
 
+# --- TELEGRAM ACCOUNT LOGIN & OTP FLOW ---
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
+    
+    if user_id not in user_login_state:
+        return
+        
+    state = user_login_state[user_id]
+    step = state.get("step")
+    slot_num = state.get("slot_number")
+    
+    if step == "waiting_phone":
+        state["phone"] = text
+        state["step"] = "waiting_otp"
+        
+        client = TelegramClient(StringSession(), API_ID, API_HASH)
+        state["client"] = client
+        
+        try:
+            await client.connect()
+            sent = await client.send_code_request(text)
+            state["phone_code_hash"] = sent.phone_code_hash
+            await update.message.reply_text("📩 OTP code aapke Telegram account par bhej diya gaya hai. Kripya OTP yahan enter karein (Jaise: 1 2 3 4 5):")
+        except Exception as e:
+            user_login_state.pop(user_id, None)
+            await update.message.reply_text(f"❌ Error sending OTP: {e}\nDubara login karne ke liye Menu se try karein.")
+            
+    elif step == "waiting_otp":
+        state["otp"] = text.replace(" ", "")
+        client = state["client"]
+        phone = state["phone"]
+        phone_code_hash = state["phone_code_hash"]
+        
+        try:
+            await client.sign_in(phone=phone, code=state["otp"], phone_code_hash=phone_code_hash)
+            me = await client.get_me()
+            session_str = client.session.save()
+            acc_name = f"{me.first_name or ''} {me.last_name or ''}".strip() or me.username or phone
+            
+            save_user_session(user_id, slot_num, phone, session_str, acc_name)
+            set_active_slot(user_id, slot_num)
+            
+            try:
+                dialogs = await client.get_dialogs(limit=100)
+                groups = [(d.id, d.title) for d in dialogs if d.is_group or d.is_channel]
+                channels = [(d.id, d.title) for d in dialogs if d.is_channel and not d.is_group]
+                save_real_groups_and_channels(user_id, groups, channels)
+            except Exception:
+                pass
+                
+            await client.disconnect()
+            user_login_state.pop(user_id, None)
+            
+            await update.message.reply_text(f"✅ **Login Successful!** (Slot {slot_num})\nAccount: {acc_name}", parse_mode="Markdown")
+            await start(update, context)
+            
+        except Exception as e:
+            if "SessionPasswordNeeded" in str(e):
+                state["step"] = "waiting_password"
+                await update.message.reply_text("🔒 Aapke account par 2-Step Verification (Password) laga hua hai. Apna password yahan bhejein:")
+            else:
+                user_login_state.pop(user_id, None)
+                await update.message.reply_text(f"❌ Login Failed: {e}\nDubara koshish karein.")
+                
+    elif step == "waiting_password":
+        client = state["client"]
+        password = text
+        
+        try:
+            await client.sign_in(password=password)
+            me = await client.get_me()
+            session_str = client.session.save()
+            acc_name = f"{me.first_name or ''} {me.last_name or ''}".strip() or me.username or state["phone"]
+            
+            save_user_session(user_id, slot_num, state["phone"], session_str, acc_name)
+            set_active_slot(user_id, slot_num)
+            
+            try:
+                dialogs = await client.get_dialogs(limit=100)
+                groups = [(d.id, d.title) for d in dialogs if d.is_group or d.is_channel]
+                channels = [(d.id, d.title) for d in dialogs if d.is_channel and not d.is_group]
+                save_real_groups_and_channels(user_id, groups, channels)
+            except Exception:
+                pass
+                
+            await client.disconnect()
+            user_login_state.pop(user_id, None)
+            
+            await update.message.reply_text(f"✅ **Login Successful!** (Slot {slot_num})\nAccount: {acc_name}", parse_mode="Markdown")
+            await start(update, context)
+            
+        except Exception as e:
+            user_login_state.pop(user_id, None)
+            await update.message.reply_text(f"❌ Password Error: {e}\nDubara koshish karein.")
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -404,7 +500,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("stop_slot_"):
         slot_num = int(data.split("_")[2])
         set_slot_stopped(user_id, slot_num, 1)
-        # Refresh main menu after stopping
         welcome_text = "💎 **AdsNova Pro Bot - Main Menu** 💎\n\n🛑 Slot Stopped Successfully."
         kb = await get_main_keyboard(user_id)
         await query.edit_message_text(welcome_text, parse_mode="Markdown", reply_markup=kb)
@@ -412,7 +507,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("start_slot_"):
         slot_num = int(data.split("_")[2])
         set_slot_stopped(user_id, slot_num, 0)
-        # Refresh main menu after starting/restarting
         welcome_text = "💎 **AdsNova Pro Bot - Main Menu** 💎\n\n🟢 Slot Restarted Successfully."
         kb = await get_main_keyboard(user_id)
         await query.edit_message_text(welcome_text, parse_mode="Markdown", reply_markup=kb)
@@ -518,6 +612,9 @@ def main():
     application.add_handler(CommandHandler("broadcast", broadcast_command))
     
     application.add_handler(CallbackQueryHandler(button_handler))
+    
+    # Message handler for phone number, OTP and password input during login
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     loop = asyncio.get_event_loop()
     loop.run_until_complete(set_bot_commands(application))
