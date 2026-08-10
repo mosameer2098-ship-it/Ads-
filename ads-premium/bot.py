@@ -60,7 +60,7 @@ async def get_main_keyboard(user_id):
     keyboard.append([InlineKeyboardButton("📊 Status", callback_data="status"), InlineKeyboardButton("⚙️ Settings", callback_data="settings")])
     keyboard.append([InlineKeyboardButton("💎 Subscription", callback_data="subscription"), InlineKeyboardButton("💡 Help", callback_data="help")])
     keyboard.append([InlineKeyboardButton(f"🔄 Switch Account (Slot {active_slot})", callback_data="switch_acc")])
-    keyboard.append([InlineKeyboardButton("✨ Refresh", callback_data="refresh"), InlineKeyboardButton("🛠️ Help Centre", callback_data="help")])
+    keyboard.append([InlineKeyboardButton("✨ Refresh", callback_data="refresh"), InlineKeyboardButton("🛠️ Help Centre", callback_data="help_centre")])
     return InlineKeyboardMarkup(keyboard)
 
 async def set_bot_commands(application):
@@ -119,7 +119,6 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else: await update.message.reply_text(join_msg, reply_markup=kb)
         return
 
-    # Non-premium restriction check
     if not check_user_access(user_id):
         text = "❌ **Access Denied!**\nAapka subscription active nahi hai. Sabhi features ko use karne ke liye pehle subscription buy karein."
         kb = InlineKeyboardMarkup([
@@ -279,7 +278,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
         return
 
-    # Subscription button sabhi ke liye open rahega taaki non-premium user buy kar sake
     if data == "subscription":
         if user_id == ADMIN_ID:
             sub_text = "💎 **Subscription Status & Details** 💎\n\n🌟 Your Subscription: Active ✅\n⏳ Expiry Date: `Lifetime (Admin) ♾️`\n⏱️ Remaining Time: `Unlimited`"
@@ -295,6 +293,28 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard.append([InlineKeyboardButton("🛒 Buy Subscription", url=f"https://t.me/{ADMIN_CONTACT_USERNAME}")])
         keyboard.append([InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")])
         await query.edit_message_text(sub_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    # Help aur Help Centre ke liye handler
+    if data == "help" or data == "help_centre":
+        help_text = (
+            "💡 **AdsNova Pro - Help & Guide** 💡\n\n"
+            "1️⃣ **Login / Add Accounts:** Apne Telegram account ka session connect karne ke liye iska use karein.\n"
+            "2️⃣ **Source Channel Setup:** Jahan se ads/messages forward karne hain, us channel ko select karein.\n"
+            "3️⃣ **Auto Forward to Groups:** Jinki groups mein ads bhejni hain, unhe select karein.\n"
+            "4️⃣ **Time Interval:** Messages ke beech ka gap (jaise 20s, 30s) set karein.\n\n"
+            f"📞 Kisi bhi samasya ya subscription ke liye Admin se sampark karein: @{ADMIN_CONTACT_USERNAME}"
+        )
+        await query.edit_message_text(
+            help_text, 
+            parse_mode="Markdown", 
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]])
+        )
+        return
+
+    # Refresh button ke liye handler
+    if data == "refresh":
+        await start(update, context)
         return
 
     # Baaki sabhi buttons ke liye Non-Premium Restriction Check
@@ -352,7 +372,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"🚪 Slot {active_slot} Logged Out!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
 
     elif data == "settings":
-        # Aapka bilkul exact purana Settings Menu look
         keyboard = [
             [InlineKeyboardButton("📢 1 Source Channel Setup", callback_data="opt_1")],
             [InlineKeyboardButton("👥 2 Auto Forward to Groups", callback_data="opt_2")],
