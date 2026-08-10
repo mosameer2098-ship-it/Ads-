@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
 def init_db():
     conn = sqlite3.connect("bot_database.db", check_same_thread=False)
@@ -27,14 +27,18 @@ def is_premium(user_id):
     cursor.execute("SELECT is_premium, expiry_date FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
     conn.close()
+    
     if row and row[0] == 1:
-        if row[1]:
+        exp_str = row[1]
+        if exp_str:
             try:
-                exp_date = datetime.strptime(row[1], "%Y-%m-%d")
-                if datetime.now() > exp_date:
+                exp_date = datetime.strptime(exp_str, "%d-%m-%Y")
+                current_date = datetime.now()
+                if current_date > exp_date:
                     remove_subscription_by_id(user_id)
                     return False
-            except:
+            except Exception as e:
+                print(f"Date check error: {e}")
                 pass
         return True
     return False
@@ -45,11 +49,10 @@ def get_user_expiry(user_id):
     cursor.execute("SELECT expiry_date FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
     conn.close()
-    return row[0] if row and row[0] else "Lifetime / Active"
+    return row[0] if row and row[0] else "30 Days Active"
 
 def add_subscription_by_id(user_id, days=30):
-    from datetime import timedelta
-    expiry = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
+    expiry = (datetime.now() + timedelta(days=days)).strftime("%d-%m-%Y")
     conn = sqlite3.connect("bot_database.db", check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
@@ -73,7 +76,19 @@ def get_all_premium_users():
     cursor.execute("SELECT user_id, username, expiry_date FROM users WHERE is_premium = 1")
     rows = cursor.fetchall()
     conn.close()
-    return rows
+    
+    active_rows = []
+    for uid, uname, expiry in rows:
+        if expiry:
+            try:
+                exp_date = datetime.strptime(expiry, "%d-%m-%Y")
+                if datetime.now() > exp_date:
+                    remove_subscription_by_id(uid)
+                    continue
+            except:
+                pass
+        active_rows.append((uid, uname, expiry))
+    return active_rows
 
 def get_bot_config(user_id):
     conn = sqlite3.connect("bot_database.db", check_same_thread=False)
@@ -102,7 +117,6 @@ def get_user_channels(user_id):
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM user_channels WHERE user_id = ?", (user_id,))
     if cursor.fetchone()[0] == 0:
-        # Sample channels matching screenshot for demo
         sample_chans = [("c_1", "DELHI FRIENDSHIP (free)"), ("c_2", "Live couple show"), ("c_3", "Permotion")]
         for cid, cname in sample_chans:
             cursor.execute("INSERT INTO user_channels (user_id, channel_id, channel_name) VALUES (?, ?, ?)", (user_id, cid, cname))
@@ -118,7 +132,7 @@ def get_user_groups(user_id):
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM user_groups WHERE user_id = ?", (user_id,))
     if cursor.fetchone()[0] == 0:
-        for i in range(1, 26):
+        for i in range(1, 41):
             cursor.execute("INSERT INTO user_groups (user_id, group_id, group_name, is_selected) VALUES (?, ?, ?, 0)", (user_id, f"g_{i}", f"Promotion Group {i}"))
         conn.commit()
     
