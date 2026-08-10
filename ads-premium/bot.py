@@ -12,7 +12,8 @@ from database import (init_db, save_user, is_premium, get_user_expiry, get_bot_c
                       get_remaining_days, get_active_slot, set_active_slot, 
                       get_slot_session, get_user_sessions, remove_user_session, set_slot_stopped,
                       add_premium_subscription, remove_premium_subscription,
-                      get_custom_share_message, check_referral_eligibility, claim_referral_reward)
+                      get_custom_share_message, check_referral_eligibility, claim_referral_reward,
+                      save_user_session, save_real_groups_and_channels)
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
@@ -273,7 +274,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception: continue
     await update.message.reply_text("✅ Broadcast complete!")
 
-# --- TELEGRAM ACCOUNT LOGIN & OTP FLOW ---
+# --- MULTI-ACCOUNT LOGIN & OTP FLOW ---
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
@@ -327,12 +328,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await client.disconnect()
             user_login_state.pop(user_id, None)
             
-            await update.message.reply_text(f"✅ **Login Successful!** (Slot {slot_num})\nAccount: {acc_name}", parse_mode="Markdown")
+            await update.message.reply_text(f"✅ **Slot {slot_num} Connected Successfully!**\nAccount: {acc_name}", parse_mode="Markdown")
             await start(update, context)
             
         except Exception as e:
             err_str = str(e)
-            # Broader check for 2FA / Two-step verification password requirement
             if "SessionPasswordNeeded" in err_str or "password" in err_str.lower() or "Two-steps verification" in err_str:
                 state["step"] = "waiting_password"
                 await update.message.reply_text("🔒 Aapke account par 2-Step Verification (Password) laga hua hai. Apna password yahan bhejein:")
@@ -364,7 +364,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await client.disconnect()
             user_login_state.pop(user_id, None)
             
-            await update.message.reply_text(f"✅ **Login Successful!** (Slot {slot_num})\nAccount: {acc_name}", parse_mode="Markdown")
+            await update.message.reply_text(f"✅ **Slot {slot_num} Connected Successfully!**\nAccount: {acc_name}", parse_mode="Markdown")
             await start(update, context)
             
         except Exception as e:
@@ -439,7 +439,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "help_centre":
         help_text = (
             "💡 **AdsNova Pro - Help & Guide** 💡\n\n"
-            "1️⃣ **Login / Add Accounts:** Apne Telegram account ka session connect karne ke liye iska use karein.\n"
+            "1️⃣ **Login / Add Accounts:** Apne multiple Telegram accounts (upto 20 slots) connect karne ke liye iska use karein.\n"
             "2️⃣ **Source Channel Setup:** Jahan se ads/messages forward karne hain, us channel ko select karein.\n"
             "3️⃣ **Auto Forward to Groups:** Jinki groups mein ads bhejni hain, unhe select karein.\n"
             "4️⃣ **Time Interval:** Messages ke beech ka gap (jaise 20s, 30s) set karein.\n\n"
@@ -486,7 +486,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 row = []
         keyboard.append([InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")])
         
-        text = f"🔄 **Switch Account**\n\n📍 Active Slot: {active_slot}\n📊 {filled_slots}/20 slots filled"
+        text = f"🔄 **Switch Account (Multi-Account Slots)**\n\n📍 Active Slot: {active_slot}\n📊 {filled_slots}/20 slots filled\n\n(🟢 = Connected, 🔴 = Saved, 👉 = Current Active)"
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("slot_click_"):
@@ -619,7 +619,7 @@ def main():
     loop = asyncio.get_event_loop()
     loop.run_until_complete(set_bot_commands(application))
     
-    print("AdsNova Pro Bot is running successfully...")
+    print("AdsNova Pro Bot is running successfully with Multi-Account support...")
     application.run_polling()
 
 if __name__ == "__main__":
