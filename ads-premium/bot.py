@@ -350,12 +350,9 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             channels = []
             async for dialog in client.iter_dialogs():
                 entity = dialog.entity
-                # Precise checking for groups and true broadcast channels
                 if dialog.is_group or getattr(entity, 'megagroup', False):
                     groups.append((dialog.id, dialog.name))
-                elif dialog.is_channel and not getattr(entity, 'megagroup', False):
-                    channels.append((dialog.id, dialog.name))
-                elif getattr(entity, 'broadcast', False):
+                elif (dialog.is_channel and not getattr(entity, 'megagroup', False)) or getattr(entity, 'broadcast', False):
                     channels.append((dialog.id, dialog.name))
                     
             await client.disconnect()
@@ -398,9 +395,7 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
                 entity = dialog.entity
                 if dialog.is_group or getattr(entity, 'megagroup', False):
                     groups.append((dialog.id, dialog.name))
-                elif dialog.is_channel and not getattr(entity, 'megagroup', False):
-                    channels.append((dialog.id, dialog.name))
-                elif getattr(entity, 'broadcast', False):
+                elif (dialog.is_channel and not getattr(entity, 'megagroup', False)) or getattr(entity, 'broadcast', False):
                     channels.append((dialog.id, dialog.name))
                     
             await client.disconnect()
@@ -435,7 +430,7 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message_input))
     
-    print("Bot is running with precise broadcast channel detection...")
+    print("Bot is running with original UI and accurate channel filter...")
     app.run_polling()
 
 if __name__ == "__main__":
