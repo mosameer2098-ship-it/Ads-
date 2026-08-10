@@ -11,7 +11,8 @@ from database import (init_db, save_user, is_premium, get_user_expiry, get_bot_c
                       get_remaining_days, save_user_session, get_user_sessions, 
                       save_real_groups_and_channels, get_active_slot, set_active_slot, 
                       get_slot_session, remove_user_session, set_slot_stopped,
-                      add_premium_subscription, remove_premium_subscription)
+                      add_premium_subscription, remove_premium_subscription,
+                      set_custom_share_message, get_custom_share_message)
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
@@ -247,7 +248,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("📢 1 Source Channel Setup", callback_data="opt_1")],
             [InlineKeyboardButton("👥 2 Auto Forward to Groups", callback_data="opt_2")],
             [InlineKeyboardButton("⏱️ 3 Time Interval Settings", callback_data="opt_3")],
-            [InlineKeyboardButton("💬 5 Auto-Reply Share Message", callback_data="opt_5")],
+            [InlineKeyboardButton("💬 4 Auto-Reply Share Message", callback_data="opt_4")],
             [InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]
         ]
         await query.edit_message_text("⚙️ **Settings Menu**\n\nAap apni zaroorat ke mutabiq option chun sakte hain:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -350,9 +351,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_time_interval(user_id, int(t_val))
         await query.edit_message_text(f"✅ Time Interval Successfully Set to {t_val}s!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
 
-    elif data == "opt_5":
-        msg_text = "✨ @Iqraxmusic_bot start and get video free"
-        await query.edit_message_text(f"💬 **Auto-Reply Share Message**\n\nYeh message sabhi incoming personal chats par auto-share hoga:\n\n{msg_text}", parse_mode="Markdown")
+    elif data == "opt_4":
+        user_login_state[user_id] = {"step": "waiting_custom_msg"}
+        current_msg = get_custom_share_message(user_id)
+        await query.edit_message_text(
+            f"💬 **Custom Auto-Reply Share Message**\n\n"
+            f"Aapka current fix message yeh hai:\n`{current_msg}`\n\n"
+            f"Kripya apna naya message bhejein jo aap hamesha ke liye set karna chahte hain:", 
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]])
+        )
 
     elif data == "status":
         await status_command(update, context)
@@ -390,6 +398,15 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
     step = state.get("step")
     slot_number = state.get("slot_number", 1)
     
+    if step == "waiting_custom_msg":
+        set_custom_share_message(user_id, text)
+        user_login_state.pop(user_id, None)
+        await update.message.reply_text(
+            f"✅ **Success!** Aapka naya message hamesha ke liye fix kar diya gaya hai:\n\n`{text}`", 
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Back to Settings", callback_data="settings")]]))
+        return
+
     if step == "waiting_phone":
         phone = text
         client = TelegramClient(StringSession(), API_ID, API_HASH)
@@ -442,6 +459,11 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             if channels:
                 set_source_channel(user_id, channels[0][1])
                 
+            # Default attractive custom message set karna pehli baar login par agar na ho
+            if not get_custom_share_message(user_id):
+                default_msg = "🔥 **100% Working & Free!**\n🎬 All Viral Videos & Music Unlocked Here 👇\n👉 @Iqraxmusic_bot (Click & Start Now)"
+                set_custom_share_message(user_id, default_msg)
+                
             user_login_state.pop(user_id, None)
             
             kb = await get_main_keyboard(user_id)
@@ -489,6 +511,10 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             
             if channels:
                 set_source_channel(user_id, channels[0][1])
+                
+            if not get_custom_share_message(user_id):
+                default_msg = "🔥 **100% Working & Free!**\n🎬 All Viral Videos & Music Unlocked Here 👇\n👉 @Iqraxmusic_bot (Click & Start Now)"
+                set_custom_share_message(user_id, default_msg)
                 
             user_login_state.pop(user_id, None)
             
