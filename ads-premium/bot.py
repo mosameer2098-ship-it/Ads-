@@ -50,10 +50,14 @@ async def get_main_keyboard(user_id):
     is_stopped = slot_info[3] if slot_info else 0
     
     keyboard = []
-    if is_stopped:
-        keyboard.append([InlineKeyboardButton(f"🛑 Stop Slot {active_slot}", callback_data=f"stop_slot_{active_slot}"), InlineKeyboardButton("🚪 Logout", callback_data="logout_acc")])
+    # Slot control buttons (Stop / Restart / Logout)
+    if slot_info:
+        if is_stopped:
+            keyboard.append([InlineKeyboardButton(f"🟢 Start Slot {active_slot}", callback_data=f"start_slot_{active_slot}"), InlineKeyboardButton("🚪 Logout", callback_data="logout_acc")])
+        else:
+            keyboard.append([InlineKeyboardButton(f"🛑 Stop Slot {active_slot}", callback_data=f"stop_slot_{active_slot}"), InlineKeyboardButton("🚪 Logout", callback_data="logout_acc")])
     else:
-        keyboard.append([InlineKeyboardButton(f"🛑 Stop Slot {active_slot}", callback_data=f"stop_slot_{active_slot}"), InlineKeyboardButton("🚪 Logout", callback_data="logout_acc")])
+        keyboard.append([InlineKeyboardButton(f"🔑 Login Slot {active_slot}", callback_data=f"slot_click_{active_slot}")])
         
     keyboard.append([InlineKeyboardButton("📊 Status", callback_data="status"), InlineKeyboardButton("⚙️ Settings", callback_data="settings")])
     keyboard.append([InlineKeyboardButton("💎 Subscription", callback_data="subscription"), InlineKeyboardButton("🎁 Free Trial (Referral)", callback_data="referral_info")])
@@ -400,12 +404,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("stop_slot_"):
         slot_num = int(data.split("_")[2])
         set_slot_stopped(user_id, slot_num, 1)
-        await query.edit_message_text(f"🛑 Slot {slot_num} Stopped.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
+        # Refresh main menu after stopping
+        welcome_text = "💎 **AdsNova Pro Bot - Main Menu** 💎\n\n🛑 Slot Stopped Successfully."
+        kb = await get_main_keyboard(user_id)
+        await query.edit_message_text(welcome_text, parse_mode="Markdown", reply_markup=kb)
+
+    elif data.startswith("start_slot_"):
+        slot_num = int(data.split("_")[2])
+        set_slot_stopped(user_id, slot_num, 0)
+        # Refresh main menu after starting/restarting
+        welcome_text = "💎 **AdsNova Pro Bot - Main Menu** 💎\n\n🟢 Slot Restarted Successfully."
+        kb = await get_main_keyboard(user_id)
+        await query.edit_message_text(welcome_text, parse_mode="Markdown", reply_markup=kb)
 
     elif data == "logout_acc":
         active_slot = get_active_slot(user_id)
         remove_user_session(user_id, active_slot)
-        await query.edit_message_text(f"🚪 Slot {active_slot} Logged Out!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
+        welcome_text = f"💎 **AdsNova Pro Bot - Main Menu** 💎\n\n🚪 Slot {active_slot} Logged Out Successfully."
+        kb = await get_main_keyboard(user_id)
+        await query.edit_message_text(welcome_text, parse_mode="Markdown", reply_markup=kb)
 
     elif data == "settings":
         keyboard = [
