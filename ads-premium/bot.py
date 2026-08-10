@@ -267,12 +267,31 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_command(update, context)
 
     elif data == "subscription":
-        sub_status = "Active ✅" if is_premium(user_id) else "Inactive ❌"
-        sub_text = (
-            "💎 **Subscription Status & Details** 💎\n\n"
-            f"🌟 Your Subscription: {sub_status}\n\n"
-            "Agar aapko apna subscription plan active ya extend karwana hai, toh kripya Bot Admin se sampark karein."
-        )
+        if user_id == ADMIN_ID:
+            sub_text = (
+                "💎 **Subscription Status & Details** 💎\n\n"
+                "🌟 Your Subscription: Active ✅\n"
+                "⏳ Expiry Date: `Lifetime (Admin) ♾️`\n"
+                "⏱️ Remaining Time: `Unlimited`\n\n"
+                "Aap bot ke Administrator hain!"
+            )
+        elif is_premium(user_id):
+            expiry_str = get_user_expiry(user_id)
+            remaining = get_remaining_days(user_id)
+            sub_text = (
+                "💎 **Subscription Status & Details** 💎\n\n"
+                "🌟 Your Subscription: Active ✅\n"
+                f"⏳ Expiry Date: `{expiry_str}`\n"
+                f"⏱️ Remaining Time: `{remaining}`\n\n"
+                "Aapka plan active hai!"
+            )
+        else:
+            sub_text = (
+                "💎 **Subscription Status & Details** 💎\n\n"
+                "🌟 Your Subscription: Inactive ❌\n\n"
+                "Aapka subscription active nahi hai. Plan lene ke liye Bot Admin se sampark karein."
+            )
+            
         await query.edit_message_text(
             sub_text, 
             parse_mode="Markdown", 
