@@ -51,6 +51,24 @@ def get_user_expiry(user_id):
     conn.close()
     return row[0] if row and row[0] else "30 Days Active"
 
+def get_remaining_days(user_id):
+    conn = sqlite3.connect("bot_database.db", check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("SELECT expiry_date FROM users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if row and row[0]:
+        try:
+            exp_date = datetime.strptime(row[0], "%d-%m-%Y")
+            # Compare dates ignoring hours/minutes so it updates dynamically each day
+            delta = exp_date.date() - datetime.now().date()
+            days = delta.days
+            return max(days, 0)
+        except:
+            pass
+    return 30
+
 def add_subscription_by_id(user_id, days=30):
     expiry = (datetime.now() + timedelta(days=days)).strftime("%d-%m-%Y")
     conn = sqlite3.connect("bot_database.db", check_same_thread=False)
