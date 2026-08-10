@@ -10,13 +10,14 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Users table
+    # Users table (Added referral_claimed column for 2 days free trial rule)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
             username TEXT,
             first_name TEXT,
-            joined_date TEXT
+            joined_date TEXT,
+            referral_claimed INTEGER DEFAULT 0
         )
     """)
     
@@ -95,14 +96,44 @@ def save_user(user):
     cursor = conn.cursor()
     joined = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     cursor.execute("""
-        INSERT OR IGNORE INTO users (user_id, username, first_name, joined_date)
-        VALUES (?, ?, ?, ?)
+        INSERT OR IGNORE INTO users (user_id, username, first_name, joined_date, referral_claimed)
+        VALUES (?, ?, ?, ?, 0)
     """, (user.id, user.username, user.first_name, joined))
     conn.commit()
     conn.close()
 
+# --- REFERRAL SYSTEM DATABASE FUNCTIONS ---
+def check_referral_eligibility(user_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT referral_claimed FROM users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if row and row["referral_claimed"] == 0:
+        return True
+    return False
+
+def claim_referral_reward(user_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # Mark referral as claimed so user cannot claim it again
+    cursor.execute("UPDATE users SET referral_claimed = 1 WHERE user_id = ?", (user_id,))
+    
+    # Add 2 days subscription trial
+    expiry_time = datetime.now() + timedelta(days=2)
+    expiry_str = expiry_time.strftime("%Y-%m-%d %H:%M:%S")
+    
+    cursor.execute("SELECT expiry_date FROM subscriptions WHERE user_id = ?", (user_id,))
+    sub = cursor.fetchone()
+    if sub:
+        cursor.execute("UPDATE subscriptions SET expiry_date = ? WHERE user_id = ?", (expiry_str, user_id))
+    else:
+        cursor.execute("INSERT INTO subscriptions (user_id, expiry_date) VALUES (?, ?)", (user_id, expiry_str))
+    
+    conn.commit()
+    conn.close()
+
 def is_premium(user_id):
-    # Admin ke liye hamesha True (Unlimited)
     ADMIN_ID = 8453975447
     if user_id == ADMIN_ID:
         return True
@@ -126,7 +157,6 @@ def is_premium(user_id):
     return False
 
 def is_subscription_expired(user_id):
-    # Admin kabhi expire nahi hoga
     ADMIN_ID = 8453975447
     if user_id == ADMIN_ID:
         return False
@@ -166,7 +196,6 @@ def add_premium_subscription(user_id, days=30):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Agar pehle se active hai toh usme din jod dein, warna aaj se 30 din
     current_expiry = get_user_expiry(user_id)
     now = datetime.now()
     
