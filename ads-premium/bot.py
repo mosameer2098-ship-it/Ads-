@@ -16,11 +16,10 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [8453975447]
 
-# Temporary memory for interactive login flow (API ID & Hash for telethon login)
-API_ID = 6 // Apni Telegram API ID yahan dalein (default public test id ya apni my.telegram.org wali)
+API_ID = 6
 API_HASH = "eb06d4abfb49dc3eeb1aeb98ae0f581e"
 
-user_login_state = {} # user_id -> {"step": "phone/otp/password", "phone": "...", "client": client, "phone_hash": "..."}
+user_login_state = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -207,7 +206,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.edit_message_text("❌ Pehle apni ID login karein (`Login / Add Accounts`).", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]), parse_mode="Markdown")
 
-# Handle interactive login inputs (Phone, OTP, Password)
 async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
@@ -228,7 +226,7 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             state["client"] = client
             state["phone_code_hash"] = sent.phone_code_hash
             state["step"] = "waiting_otp"
-            await update.message.reply_text("📨 OTP bhej diya gaya hai! Kripya woh **OTP** yahan enter karein (agar number ke beech space ho toh hata kar dalein, e.g., `1 2 3 4 5` ki jagah `12345`):")
+            await update.message.reply_text("📨 OTP bhej diya gaya hai! Kripya woh **OTP** yahan enter karein (agar number ke beech space ho toh hata kar dalein):")
         except Exception as e:
             await client.disconnect()
             user_login_state.pop(user_id, None)
@@ -242,7 +240,6 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
         
         try:
             await client.sign_in(phone=phone, code=otp, phone_code_hash=phone_code_hash)
-            # Login successful! Fetch real groups and channels
             session_str = client.session.save()
             me = await client.get_me()
             acc_name = f"{me.first_name or ''} {me.last_name or ''}".strip()
@@ -288,7 +285,7 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             channels = []
             async for dialog in client.iter_dialogs():
                 if dialog.is_group:
-                    groups.append((dialog.id, dialog.name))
+                    groups.append((dialog.id,ڊ dialog.name))
                 elif dialog.is_channel:
                     channels.append((dialog.id, dialog.name))
                     
