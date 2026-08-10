@@ -5,7 +5,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotComm
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from telethon import TelegramClient
 from telethon.sessions import StringSession
-from database import (init_db, save_user, is_premium, get_user_expiry, get_bot_config, 
+from database import (init_db, save_user, is_premium, is_subscription_expired, get_user_expiry, get_bot_config, 
                       set_source_channel, set_time_interval, get_user_groups, 
                       toggle_group_selection, set_all_groups_selection, get_user_channels, 
                       get_remaining_days, save_user_session, get_user_sessions, 
@@ -421,16 +421,32 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_command(update, context)
 
     elif data == "subscription":
-        if is_premium(user_id):
+        if user_id == ADMIN_ID:
+            sub_text = (
+                "💎 **AdsNova Pro Subscription (Admin)**\n\n"
+                "✨ Status: Unlimited Lifetime ♾️\n"
+                "⏳ Days Remaining: N/A (Admin)\n\n"
+                "👑 Aapke paas sabhi features unlocked hain!"
+            )
+        elif is_premium(user_id):
             expiry = get_user_expiry(user_id)
             rem_days = get_remaining_days(user_id)
-            sub_text = (
-                "💎 **AdsNova Pro Subscription**\n\n"
-                "✨ Status: Active ✅\n"
-                f"⏳ Days Remaining: {rem_days} Days\n"
-                f"📅 Expiry Date: {expiry}\n\n"
-                "🎉 Aapke paas sabhi features unlocked hain!"
-            )
+            
+            if rem_days > 0:
+                sub_text = (
+                    "💎 **AdsNova Pro Subscription**\n\n"
+                    "✨ Status: Active ✅\n"
+                    f"⏳ Days Remaining: {rem_days} Days\n"
+                    f"📅 Expiry Date: {expiry}\n\n"
+                    "🎉 Enjoy premium features!"
+                )
+            else:
+                sub_text = (
+                    "💎 **AdsNova Pro Subscription**\n\n"
+                    "✨ Status: Expired ❌\n\n"
+                    "⏳ Days Remaining: 0 Days\n"
+                    "Your subscription has ended."
+                )
         else:
             sub_text = "💎 **AdsNova Pro Subscription**\n\nUnlock unlimited features!\nTo buy subscription, contact admin here: @AdsNova0"
         
@@ -592,7 +608,7 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text(f"❌ Password Incorrect: {e}\n\nDobara koshish karne ke liye /start dabayein.")
 
 async def background_forwarder():
-    """Background task jo channel se message copy karke bhejega taaki 'Forwarded from' tag hide rahe."""
+    """Background task jo subscription check karega aur expire hone par slot stop karke message forward karega."""
     while True:
         try:
             import sqlite3
@@ -603,6 +619,14 @@ async def background_forwarder():
             sessions = cursor.fetchall()
             
             for user_id, slot_number, session_str, is_stopped in sessions:
+                
+                # Subscription Expiry Check (Admin kabhi expire nahi hoga)
+                if user_id != ADMIN_ID and is_subscription_expired(user_id):
+                    if not is_stopped:
+                        set_slot_stopped(user_id, slot_number, 1)
+                        logging.info(f"User {user_id} subscription expired. Slot {slot_number} stopped automatically.")
+                    continue
+
                 if is_stopped:
                     continue
                 
