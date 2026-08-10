@@ -274,7 +274,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception: continue
     await update.message.reply_text("✅ Broadcast complete!")
 
-# --- MULTI-ACCOUNT LOGIN & OTP FLOW ---
+# --- MULTI-ACCOUNT LOGIN & OTP FLOW (WITH FIXED CHANNEL FETCHING) ---
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
@@ -318,9 +318,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             set_active_slot(user_id, slot_num)
             
             try:
-                dialogs = await client.get_dialogs(limit=100)
-                groups = [(d.id, d.title) for d in dialogs if d.is_group or d.is_channel]
-                channels = [(d.id, d.title) for d in dialogs if d.is_channel and not d.is_group]
+                dialogs = await client.get_dialogs(limit=200)
+                groups = []
+                channels = []
+                for d in dialogs:
+                    if d.is_channel:
+                        channels.append((d.id, d.title))
+                    if d.is_group or (d.is_channel and getattr(d.entity, 'megagroup', False)):
+                        groups.append((d.id, d.title))
                 save_real_groups_and_channels(user_id, groups, channels)
             except Exception:
                 pass
@@ -354,9 +359,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             set_active_slot(user_id, slot_num)
             
             try:
-                dialogs = await client.get_dialogs(limit=100)
-                groups = [(d.id, d.title) for d in dialogs if d.is_group or d.is_channel]
-                channels = [(d.id, d.title) for d in dialogs if d.is_channel and not d.is_group]
+                dialogs = await client.get_dialogs(limit=200)
+                groups = []
+                channels = []
+                for d in dialogs:
+                    if d.is_channel:
+                        channels.append((d.id, d.title))
+                    if d.is_group or (d.is_channel and getattr(d.entity, 'megagroup', False)):
+                        groups.append((d.id, d.title))
                 save_real_groups_and_channels(user_id, groups, channels)
             except Exception:
                 pass
