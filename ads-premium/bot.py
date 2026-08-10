@@ -27,15 +27,15 @@ async def get_main_keyboard(user_id):
     
     keyboard = []
     if is_stopped:
-        keyboard.append([InlineKeyboardButton(f"Stop Slot {active_slot}", callback_data=f"stop_slot_{active_slot}"), InlineKeyboardButton("Logout", callback_data="logout_acc")])
+        keyboard.append([InlineKeyboardButton(f"🛑 Stop Slot {active_slot}", callback_data=f"stop_slot_{active_slot}"), InlineKeyboardButton("🚪 Logout", callback_data="logout_acc")])
     else:
-        keyboard.append([InlineKeyboardButton(f"Stop Slot {active_slot}", callback_data=f"stop_slot_{active_slot}"), InlineKeyboardButton("Logout", callback_data="logout_acc")])
+        keyboard.append([InlineKeyboardButton(f"🛑 Stop Slot {active_slot}", callback_data=f"stop_slot_{active_slot}"), InlineKeyboardButton("🚪 Logout", callback_data="logout_acc")])
         
-    keyboard.append([InlineKeyboardButton("Status", callback_data="status"), InlineKeyboardButton("Settings", callback_data="settings")])
-    keyboard.append([InlineKeyboardButton("Subscription", callback_data="subscription"), InlineKeyboardButton("Help", callback_data="help")])
-    keyboard.append([InlineKeyboardButton(f"Switch Account (Slot {active_slot})", callback_data="switch_acc")])
-    keyboard.append([InlineKeyboardButton("Refresh", callback_data="refresh"), InlineKeyboardButton("Help Centre", callback_data="help")])
-    keyboard.append([InlineKeyboardButton("TG ID BOT", url="https://t.me/useridinfobot")])
+    keyboard.append([InlineKeyboardButton("📊 Status", callback_data="status"), InlineKeyboardButton("⚙️ Settings", callback_data="settings")])
+    keyboard.append([InlineKeyboardButton("💎 Subscription", callback_data="subscription"), InlineKeyboardButton("💡 Help", callback_data="help")])
+    keyboard.append([InlineKeyboardButton(f"🔄 Switch Account (Slot {active_slot})", callback_data="switch_acc")])
+    keyboard.append([InlineKeyboardButton("✨ Refresh", callback_data="refresh"), InlineKeyboardButton("🛠️ Help Centre", callback_data="help")])
+    keyboard.append([InlineKeyboardButton("🤖 TG ID BOT", url="https://t.me/useridinfobot")])
     return InlineKeyboardMarkup(keyboard)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -43,17 +43,65 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_user(user)
     
     welcome_text = (
-        "Auto Forwarding Ads Bot - Main Menu\n\n"
-        "Premium Service - Fast & Reliable\n"
-        "Random Intervals for natural posting\n"
-        "Your profile stays unchanged\n\n"
-        "Choose an option below:"
+        "🌹 **Auto Forwarding Ads Bot - Main Menu** 🌹\n\n"
+        "✨ Premium Service - Fast & Reliable\n"
+        "⚡ Random Intervals for natural posting\n"
+        "🛡️ Your profile stays unchanged\n\n"
+        "👇 Choose an option below:"
     )
     kb = await get_main_keyboard(user.id)
     if update.callback_query:
-        await update.callback_query.edit_message_text(welcome_text, reply_markup=kb)
+        await update.callback_query.edit_message_text(welcome_text, parse_mode="Markdown", reply_markup=kb)
     else:
-        await update.message.reply_text(welcome_text, reply_markup=kb)
+        await update.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=kb)
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    config = get_bot_config(user_id)
+    chan = config[0] if config and config[0] else "Not Set"
+    t_int = config[1] if config else 30
+    active_slot = get_active_slot(user_id)
+    slot_data = get_slot_session(user_id, active_slot)
+    
+    login_status = "Logged In" if slot_data else "Not Logged In"
+    acc_name = slot_data[2] if slot_data else "N/A"
+    is_stopped = slot_data[3] if slot_data else 0
+    forwarding_status = "Stopped" if is_stopped else "Active (Running)"
+    
+    groups = get_user_groups(user_id)
+    sel_groups = sum(1 for g in groups if g[2] == 1)
+
+    status_text = (
+        "📊 **Your Account & Posting Status**\n\n"
+        f"🆔 User ID: `{user_id}`\n"
+        f"📂 Active Account Slot: Slot {active_slot}\n"
+        f"🔐 Login Status: {login_status}\n"
+        f"🌟 Subscription: Active\n\n"
+        f"🚀 Forwarding Status: {forwarding_status}\n"
+        f"📢 Source Channel: {chan}\n"
+        f"👥 Target Groups: {sel_groups} groups selected\n"
+        f"⏱️ Posting Interval: {t_int} seconds\n\n"
+        f"📨 Messages Forwarded: 0\n\n"
+        f"👤 **Logged-in Account Details**\n"
+        f"📌 Account Status: Connected ✅\n"
+        f"🏷️ Name: {acc_name}"
+    )
+    await update.message.reply_text(status_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(f"🛑 Stop Slot {active_slot}", callback_data=f"stop_slot_{active_slot}"), InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
+
+async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    active_slot = get_active_slot(user_id)
+    set_slot_stopped(user_id, active_slot, 1)
+    await update.message.reply_text(f"🛑 Slot {active_slot} has been stopped successfully.")
+
+async def logout_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    active_slot = get_active_slot(user_id)
+    remove_user_session(user_id, active_slot)
+    await update.message.reply_text(f"🚪 Slot {active_slot} logged out successfully.")
+
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("👑 **Admin Panel:**\n- `/addsub <user_id>`\n- `/delsub <user_id>`", parse_mode="Markdown")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -86,17 +134,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 keyboard.append(row)
                 row = []
         
-        keyboard.append([InlineKeyboardButton("Back to Menu", callback_data="main_menu")])
+        keyboard.append([InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")])
         
         text = (
-            "Switch Account\n\n"
-            f"You are currently using Slot {active_slot}.\n"
-            f"{filled_slots}/20 slots filled\n\n"
+            "🔄 **Switch Account**\n\n"
+            f"📍 You are currently using Slot {active_slot}.\n"
+            f"📊 {filled_slots}/20 slots filled\n\n"
             "🔴 = Account connected | 🟢 = Empty slot\n"
             "👉 = Currently active\n\n"
-            "Select a slot to switch or login:"
+            "👇 Select a slot to switch or login:"
         )
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("slot_click_"):
         slot_num = int(data.split("_")[2])
@@ -104,11 +152,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if slot_data:
             set_active_slot(user_id, slot_num)
-            await query.edit_message_text(f"Switched to Slot {slot_num} successfully!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back to Menu", callback_data="main_menu")]]))
+            await query.edit_message_text(f"✅ Switched to Slot {slot_num} successfully!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
         else:
             user_login_state[user_id] = {"step": "waiting_phone", "slot_number": slot_num}
             await query.edit_message_text(
-                f"Telegram Account Login (Slot {slot_num})\n\nKripya apna Phone Number country code ke sath bhejein (Jaise: +919876543210):"
+                f"📱 **Telegram Account Login (Slot {slot_num})**\n\nKripya apna Phone Number country code ke sath bhejein (Jaise: +919876543210):", parse_mode="Markdown"
             )
 
     elif data.startswith("stop_slot_"):
@@ -116,14 +164,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_slot_stopped(user_id, slot_num, 1)
         
         text = (
-            f"Slot {slot_num} Stopped\n\n"
+            f"🛑 **Slot {slot_num} Stopped**\n\n"
             "Ad posting for this slot has been stopped. Other active slots continue running normally."
         )
         keyboard = [
-            [InlineKeyboardButton(f"Restart Slot {slot_num}", callback_data=f"restart_slot_{slot_num}")],
-            [InlineKeyboardButton("Back to Menu", callback_data="main_menu")]
+            [InlineKeyboardButton(f"▶️ Restart Slot {slot_num}", callback_data=f"restart_slot_{slot_num}")],
+            [InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]
         ]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("restart_slot_"):
         slot_num = int(data.split("_")[2])
@@ -134,24 +182,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "logout_acc":
         active_slot = get_active_slot(user_id)
         remove_user_session(user_id, active_slot)
-        await query.edit_message_text(f"Slot {active_slot} Logged Out Successfully!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back to Menu", callback_data="main_menu")]]))
+        await query.edit_message_text(f"🚪 Slot {active_slot} Logged Out Successfully!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
 
     elif data == "settings":
         keyboard = [
-            [InlineKeyboardButton("1 Source Channel Setup", callback_data="opt_1")],
-            [InlineKeyboardButton("2 Auto Forward to Groups", callback_data="opt_2")],
-            [InlineKeyboardButton("3 Time Interval Settings", callback_data="opt_3")],
-            [InlineKeyboardButton("5 Auto-Reply Share Message", callback_data="opt_5")],
-            [InlineKeyboardButton("Back to Menu", callback_data="main_menu")]
+            [InlineKeyboardButton("📢 1 Source Channel Setup", callback_data="opt_1")],
+            [InlineKeyboardButton("👥 2 Auto Forward to Groups", callback_data="opt_2")],
+            [InlineKeyboardButton("⏱️ 3 Time Interval Settings", callback_data="opt_3")],
+            [InlineKeyboardButton("💬 5 Auto-Reply Share Message", callback_data="opt_5")],
+            [InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]
         ]
-        await query.edit_message_text("Settings Menu\n\nAap apni zaroorat ke mutabiq option chun sakte hain:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text("⚙️ **Settings Menu**\n\nAap apni zaroorat ke mutabiq option chun sakte hain:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "opt_1" or data.startswith("set_chan_sel_"):
         channels = get_user_channels(user_id)
         if not channels:
             await query.edit_message_text(
-                "Aapke account mein koi channel nahi mila!\n\nPlz join the channel and forward your message", 
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back to Settings", callback_data="settings")]])
+                "❌ **Aapke account mein koi channel nahi mila!**\n\nPlz join the channel and forward your message", 
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]])
             )
             return
 
@@ -160,24 +209,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             c_name = channels[idx][1]
             set_source_channel(user_id, c_name)
             await query.edit_message_text(
-                f"Source Channel Successfully Set to '{c_name}'!", 
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back to Settings", callback_data="settings")]])
+                f"✅ Source Channel Successfully Set to '{c_name}'!", 
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]])
             )
             return
 
         keyboard = []
         for index, (cid, cname) in enumerate(channels):
-            keyboard.append([InlineKeyboardButton(f"{cname}", callback_data=f"set_chan_sel_{index}")])
-        keyboard.append([InlineKeyboardButton("Back to Settings", callback_data="settings")])
+            keyboard.append([InlineKeyboardButton(f"📌 {cname}", callback_data=f"set_chan_sel_{index}")])
+        keyboard.append([InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")])
 
-        text = f"Select Source Channel\n\nChoose the channel to forward ads from:\nShowing 1-{len(channels)} of {len(channels)}"
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        text = f"📢 **Select Source Channel**\n\nChoose the channel to forward ads from:\nShowing 1-{len(channels)} of {len(channels)}"
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     elif data == "opt_2" or data.startswith("grp_page_") or data.startswith("grp_tog_") or data == "grp_select_all" or data == "grp_deselect_all" or data == "grp_done":
         groups = get_user_groups(user_id)
         if not groups:
-            await query.edit_message_text("Aapke account mein koi group nahi mila!\n\nPlz join the group and forward your message", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back to Settings", callback_data="settings")]]))
+            await query.edit_message_text("❌ **Aapke account mein koi group nahi mila!**\n\nPlz join the group and forward your message", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
             return
 
         total_groups = len(groups)
@@ -197,7 +246,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             set_all_groups_selection(user_id, 0)
             groups = get_user_groups(user_id)
         elif data == "grp_done":
-            await query.edit_message_text("Selected groups successfully saved for auto-forwarding!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back to Settings", callback_data="settings")]]))
+            await query.edit_message_text("✅ Selected groups successfully saved for auto-forwarding!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
             return
 
         per_page = 10
@@ -212,91 +261,62 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         nav_buttons = []
         if page > 0:
-            nav_buttons.append(InlineKeyboardButton("Previous", callback_data=f"grp_page_{page-1}"))
+            nav_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"grp_page_{page-1}"))
         if end_idx < total_groups:
-            nav_buttons.append(InlineKeyboardButton("Next", callback_data=f"grp_page_{page+1}"))
+            nav_buttons.append(InlineKeyboardButton("➡️ Next", callback_data=f"grp_page_{page+1}"))
         if nav_buttons:
             keyboard.append(nav_buttons)
 
         keyboard.append([
-            InlineKeyboardButton("Select All", callback_data="grp_select_all"),
-            InlineKeyboardButton("Deselect All", callback_data="grp_deselect_all")
+            InlineKeyboardButton("☑️ Select All", callback_data="grp_select_all"),
+            InlineKeyboardButton("🔲 Deselect All", callback_data="grp_deselect_all")
         ])
-        keyboard.append([InlineKeyboardButton("Done", callback_data="grp_done")])
-        keyboard.append([InlineKeyboardButton("Back to Settings", callback_data="settings")])
+        keyboard.append([InlineKeyboardButton("✔️ Done", callback_data="grp_done")])
+        keyboard.append([InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")])
 
-        text = f"Select Target Groups\n\nShowing {start_idx + 1}-{end_idx} of {total_groups}\n\nTap groups to select/deselect:"
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        text = f"👥 **Select Target Groups**\n\nShowing {start_idx + 1}-{end_idx} of {total_groups}\n\nTap groups to select/deselect:"
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "opt_3":
         config = get_bot_config(user_id)
         current_time = config[1] if config else 30
         keyboard = [
-            [InlineKeyboardButton("20s", callback_data="time_20"), InlineKeyboardButton("30s", callback_data="time_30"), InlineKeyboardButton("60s", callback_data="time_60")],
-            [InlineKeyboardButton("120s", callback_data="time_120"), InlineKeyboardButton("300s", callback_data="time_300")],
-            [InlineKeyboardButton("Back to Settings", callback_data="settings")]
+            [InlineKeyboardButton("⚡ 20s", callback_data="time_20"), InlineKeyboardButton("⚡ 30s", callback_data="time_30"), InlineKeyboardButton("⚡ 60s", callback_data="time_60")],
+            [InlineKeyboardButton("⚡ 120s", callback_data="time_120"), InlineKeyboardButton("⚡ 300s", callback_data="time_300")],
+            [InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]
         ]
-        await query.edit_message_text(f"Time Interval Settings\n\nCurrent Active Time: {current_time} seconds\nNeeche se naya time select karein:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text(f"⏱️ **Time Interval Settings**\n\nCurrent Active Time: {current_time} seconds\nNeeche se naya time select karein:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("time_"):
         t_val = data.split("_")[1]
         set_time_interval(user_id, int(t_val))
-        await query.edit_message_text(f"Time Interval Successfully Set to {t_val}s!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back to Settings", callback_data="settings")]]))
+        await query.edit_message_text(f"✅ Time Interval Successfully Set to {t_val}s!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
 
     elif data == "opt_5":
         msg_text = "✨ @Iqraxmusic_bot start and get video free"
-        await query.edit_message_text(f"Auto-Reply Share Message\n\nYeh message sabhi incoming personal chats par auto-share hoga:\n\n{msg_text}")
+        await query.edit_message_text(f"💬 **Auto-Reply Share Message**\n\nYeh message sabhi incoming personal chats par auto-share hoga:\n\n{msg_text}", parse_mode="Markdown")
 
     elif data == "status":
-        config = get_bot_config(user_id)
-        chan = config[0] if config and config[0] else "Not Set"
-        t_int = config[1] if config else 30
-        active_slot = get_active_slot(user_id)
-        slot_data = get_slot_session(user_id, active_slot)
-        
-        login_status = "Logged In" if slot_data else "Not Logged In"
-        acc_name = slot_data[2] if slot_data else "N/A"
-        is_stopped = slot_data[3] if slot_data else 0
-        forwarding_status = "Stopped" if is_stopped else "Active (Running)"
-        
-        groups = get_user_groups(user_id)
-        sel_groups = sum(1 for g in groups if g[2] == 1)
-
-        status_text = (
-            f"Your Account & Posting Status\n\n"
-            f"User ID: {user_id}\n"
-            f"Active Account Slot: Slot {active_slot}\n"
-            f"Login Status: {login_status}\n"
-            f"Subscription: Active\n\n"
-            f"Forwarding Status: {forwarding_status}\n"
-            f"Source Channel: {chan}\n"
-            f"Target Groups: {sel_groups} groups selected\n"
-            f"Posting Interval: {t_int} seconds\n\n"
-            f"Messages Forwarded: 0\n\n"
-            f"Logged-in Account Details\n"
-            f"Account Status: Connected ✅\n"
-            f"Name: {acc_name}"
-        )
-        await query.edit_message_text(status_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(f"Stop Slot {active_slot}", callback_data=f"stop_slot_{active_slot}"), InlineKeyboardButton("Back to Menu", callback_data="main_menu")]]))
+        await status_command(update, context)
 
     elif data == "subscription":
         if is_premium(user_id):
             expiry = get_user_expiry(user_id)
             rem_days = get_remaining_days(user_id)
             sub_text = (
-                f"Your Premium Subscription\n\n"
-                f"Status: Active\n"
-                f"Days Remaining: {rem_days} Days\n"
-                f"Expiry Date: {expiry}\n\n"
-                f"Aapke paas sabhi features unlocked hain!"
+                "💎 **Your Premium Subscription**\n\n"
+                "✨ Status: Active\n"
+                f"⏳ Days Remaining: {rem_days} Days\n"
+                f"📅 Expiry Date: {expiry}\n\n"
+                "🎉 Aapke paas sabhi features unlocked hain!"
             )
         else:
-            sub_text = "Premium Subscription\n\nUnlock unlimited features!\nTo buy subscription, contact admin here: @AdsNova0"
+            sub_text = "💎 **Premium Subscription**\n\nUnlock unlimited features!\nTo buy subscription, contact admin here: @AdsNova0"
         
-        await query.edit_message_text(sub_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back to Menu", callback_data="main_menu")]]))
+        await query.edit_message_text(sub_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
 
     elif data == "help":
-        await query.edit_message_text("Help & Guide\n\nAapko support @AdsNova0 par milegi.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back to Menu", callback_data="main_menu")]]))
+        await query.edit_message_text("💡 **Help & Guide**\n\nAapko support @AdsNova0 par milegi.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
 
     elif data == "refresh":
         await start(update, context)
@@ -323,15 +343,15 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             state["phone_code_hash"] = sent.phone_code_hash
             state["step"] = "waiting_otp"
             await update.message.reply_text(
-                "OTP bhej diya gaya hai!\n\n"
+                "📩 **OTP bhej diya gaya hai!**\n\n"
                 "Kripya OTP space dekar dalein:\n"
-                "❌ 12345 (Galat tarika)\n"
-                "✅ 1 2 3 4 5 (Sahi tarika)"
+                "❌ `12345` (Galat tarika)\n"
+                "✅ `1 2 3 4 5` (Sahi tarika)", parse_mode="Markdown"
             )
         except Exception as e:
             await client.disconnect()
             user_login_state.pop(user_id, None)
-            await update.message.reply_text(f"Error: {e}\n\nDobara koshish karne ke liye /start dabayein.")
+            await update.message.reply_text(f"❌ Error: {e}\n\nDobara koshish karne ke liye /start dabayein.")
             
     elif step == "waiting_otp":
         otp = text.replace(" ", "")
@@ -364,21 +384,21 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             
             kb = await get_main_keyboard(user_id)
             await update.message.reply_text(
-                f"Login Successful in Slot {slot_number}! ({acc_name})\n\n"
+                f"✅ **Login Successful in Slot {slot_number}! ({acc_name})**\n\n"
                 f"• Real Groups Found: {len(groups)}\n"
                 f"• Creator/Admin Channels Found: {len(channels)}\n\n"
-                "Aap ab Settings mein jaakar apne groups aur channels select kar sakte hain!",
+                "Aap ab Settings mein jaakar apne groups aur channels select kar sakte hain!", parse_mode="Markdown",
                 reply_markup=kb
             )
                 
         except Exception as e:
             if "Password" in str(e) or "two-step" in str(e).lower():
                 state["step"] = "waiting_password"
-                await update.message.reply_text("Aapke account par Two-Step Verification (Password) laga hai. Kripya apna cloud password enter karein:")
+                await update.message.reply_text("🔒 Aapke account par Two-Step Verification (Password) laga hai. Kripya apna cloud password enter karein:")
             else:
                 await client.disconnect()
                 user_login_state.pop(user_id, None)
-                await update.message.reply_text(f"Login Failed: {e}\n\nDobara koshish karne ke liye /start dabayein.")
+                await update.message.reply_text(f"❌ Login Failed: {e}\n\nDobara koshish karne ke liye /start dabayein.")
                 
     elif step == "waiting_password":
         password = text
@@ -408,17 +428,17 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             
             kb = await get_main_keyboard(user_id)
             await update.message.reply_text(
-                f"Login Successful in Slot {slot_number}! ({acc_name})\n\n"
+                f"✅ **Login Successful in Slot {slot_number}! ({acc_name})**\n\n"
                 f"• Real Groups Found: {len(groups)}\n"
                 f"• Creator/Admin Channels Found: {len(channels)}\n\n"
-                "Aap ab Settings mein jaakar apne groups aur channels select kar sakte hain!",
+                "Aap ab Settings mein jaakar apne groups aur channels select kar sakte hain!", parse_mode="Markdown",
                 reply_markup=kb
             )
                 
         except Exception as e:
             await client.disconnect()
             user_login_state.pop(user_id, None)
-            await update.message.reply_text(f"Password Incorrect: {e}\n\nDobara koshish karne ke liye /start dabayein.")
+            await update.message.reply_text(f"❌ Password Incorrect: {e}\n\nDobara koshish karne ke liye /start dabayein.")
 
 def main():
     if not BOT_TOKEN:
@@ -429,10 +449,15 @@ def main():
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", start))
+    app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("stop", stop_command))
+    app.add_handler(CommandHandler("logout", logout_command))
+    app.add_handler(CommandHandler("admin", admin_command))
+    
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message_input))
     
-    print("Bot is running with start/menu commands and strict creator channel filter...")
+    print("Bot is running with beautiful emojis and all features...")
     app.run_polling()
 
 if __name__ == "__main__":
