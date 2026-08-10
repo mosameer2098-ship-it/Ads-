@@ -5,11 +5,12 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Callb
 from database import (init_db, save_user, is_premium, get_user_expiry, get_bot_config, 
                       set_source_channel, set_time_interval, add_subscription_by_id, 
                       remove_subscription_by_id, get_all_premium_users, get_user_groups, 
-                      toggle_group_selection, set_all_groups_selection, get_user_channels)
+                      toggle_group_selection, set_all_groups_selection, get_user_channels, 
+                      get_remaining_days)
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# Token ab sirf environment variable ya .env se aayega (GitHub par safe rahega)
+# Token hamesha environment variable se aayega (Secure for Public Repo)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 ADMIN_IDS = [8453975447]
@@ -56,7 +57,8 @@ async def list_premium_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = "💎 **Active Premium Users List:**\n\n"
     for uid, uname, expiry in prem_users:
-        text += f"• ID: `{uid}` | Username: @{uname or 'None'} | Expiry: {expiry}\n"
+        rem_days = get_remaining_days(uid)
+        text += f"• ID: `{uid}` | Username: @{uname or 'None'} | Expiry: {expiry} ({rem_days} days left)\n"
     
     await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -213,7 +215,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "subscription":
         if is_premium(user_id):
             expiry = get_user_expiry(user_id)
-            sub_text = f"💎 **Your Premium Subscription**\n\nStatus: **Active ✅**\nExpiry Date: **{expiry}**\n\nAapke paas sabhi features unlocked hain!"
+            rem_days = get_remaining_days(user_id)
+            sub_text = (
+                f"💎 **Your Premium Subscription**\n\n"
+                f"Status: **Active ✅**\n"
+                f"⏳ Days Remaining: **{rem_days} Days**\n"
+                f"📅 Expiry Date: **{expiry}**\n\n"
+                f"Aapke paas sabhi features unlocked hain!"
+            )
         else:
             sub_text = "💎 **Premium Subscription**\n\nUnlock unlimited features!\nTo buy subscription, contact admin here: **@AdsNova0**"
         
