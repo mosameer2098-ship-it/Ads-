@@ -285,7 +285,7 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             channels = []
             async for dialog in client.iter_dialogs():
                 if dialog.is_group:
-                    groups.append((dialog.id,ڊ dialog.name))
+                    groups.append((dialog.id, dialog.name))
                 elif dialog.is_channel:
                     channels.append((dialog.id, dialog.name))
                     
