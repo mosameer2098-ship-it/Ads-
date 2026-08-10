@@ -20,7 +20,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 API_ID = 32222378
 API_HASH = "35fa506b69e293835d37158ea97557cf"
 
-ADMIN_ID = 8132623749
+ADMIN_ID = 8453975447
 BOT_USERNAME = "Automatic_posttbot"
 
 user_login_state = {}
