@@ -351,12 +351,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"✅ Time Interval Successfully Set to {t_val}s!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
 
     elif data == "opt_4":
+        # Yahan Admin check lagaya gaya hai taaki sirf Admin hi edit kar sake
+        if user_id != ADMIN_ID:
+            await query.edit_message_text(
+                "❌ **Access Denied!**\n\nYeh custom message sirf Bot ka Admin hi change kar sakta hai.",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]])
+            )
+            return
+
         user_login_state[user_id] = {"step": "waiting_custom_msg"}
-        current_msg = get_custom_share_message(user_id)
+        current_msg = get_custom_share_message(ADMIN_ID)
         await query.edit_message_text(
-            f"💬 **Custom Auto-Reply Share Message**\n\n"
+            f"💬 **Custom Auto-Reply Share Message (Admin Only)**\n\n"
             f"Aapka current fix message yeh hai:\n`{current_msg}`\n\n"
-            f"Kripya apna naya message bhejein jo aap hamesha ke liye set karna chahte hain:", 
+            f"Kripya apna naya message bhejein jo aap hamesha ke liye fix karna chahte hain:", 
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]])
         )
@@ -398,10 +407,15 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
     slot_number = state.get("slot_number", 1)
     
     if step == "waiting_custom_msg":
-        set_custom_share_message(user_id, text)
+        if user_id != ADMIN_ID:
+            user_login_state.pop(user_id, None)
+            await update.message.reply_text("❌ Aap is message ko change nahi kar sakte!")
+            return
+            
+        set_custom_share_message(ADMIN_ID, text)
         user_login_state.pop(user_id, None)
         await update.message.reply_text(
-            f"✅ **Success!** Aapka naya message hamesha ke liye fix kar diya gaya hai:\n\n`{text}`", 
+            f"✅ **Success!** Admin message hamesha ke liye update kar diya gaya hai:\n\n`{text}`", 
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Back to Settings", callback_data="settings")]]))
         return
@@ -458,9 +472,9 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             if channels:
                 set_source_channel(user_id, channels[0][1])
                 
-            if not get_custom_share_message(user_id):
+            if not get_custom_share_message(ADMIN_ID):
                 default_msg = "🔥 **100% Working & Free!**\n🎬 All Viral Videos & Music Unlocked Here 👇\n👉 @Iqraxmusic_bot (Click & Start Now)"
-                set_custom_share_message(user_id, default_msg)
+                set_custom_share_message(ADMIN_ID, default_msg)
                 
             user_login_state.pop(user_id, None)
             
@@ -510,9 +524,9 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             if channels:
                 set_source_channel(user_id, channels[0][1])
                 
-            if not get_custom_share_message(user_id):
+            if not get_custom_share_message(ADMIN_ID):
                 default_msg = "🔥 **100% Working & Free!**\n🎬 All Viral Videos & Music Unlocked Here 👇\n👉 @Iqraxmusic_bot (Click & Start Now)"
-                set_custom_share_message(user_id, default_msg)
+                set_custom_share_message(ADMIN_ID, default_msg)
                 
             user_login_state.pop(user_id, None)
             
@@ -531,7 +545,7 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text(f"❌ Password Incorrect: {e}\n\nDobara koshish karne ke liye /start dabayein.")
 
 async def background_forwarder():
-    """Background task jo automatic channel detect karke private/public dono se messages forward karega."""
+    """Background task jo automatic channel detect karke private/public dono se messages copy karke bheja (Channel hide rakhega)."""
     while True:
         try:
             import sqlite3
@@ -576,11 +590,14 @@ async def background_forwarder():
                                 for g_id in selected_groups:
                                     try:
                                         target_id = int(g_id) if g_id.lstrip('-').isdigit() else g_id
-                                        await client.forward_messages(target_id, message)
+                                        
+                                        # Forwarding ki jagah send_message copy use kiya hai taaki channel ka name/tag hide rahe
+                                        await client.send_message(target_id, message)
+                                        
                                         forwarded_counts[user_id] = forwarded_counts.get(user_id, 0) + 1
                                         await asyncio.sleep(2)
                                     except Exception as fe:
-                                        logging.error(f"Forward error: {fe}")
+                                        logging.error(f"Send copy error: {fe}")
                                 break
                 except Exception as ce:
                     logging.error(f"Auto-channel detection error: {ce}")
