@@ -24,8 +24,24 @@ API_HASH = "35fa506b69e293835d37158ea97557cf"
 ADMIN_ID = 8453975447
 BOT_USERNAME = "Automatic_posttbot"
 
+# Aapke diye gaye exact usernames
+FORCE_CHANNEL_USERNAME = "@iqra_music_support"
+ADMIN_CONTACT_USERNAME = "AdsNova0"
+
 user_login_state = {}
 forwarded_counts = {}
+
+# --- FORCE SUBSCRIPTION & MEMBERSHIP CHECK ---
+async def check_channel_membership(user_id, context):
+    if user_id == ADMIN_ID:
+        return True
+    try:
+        member = await context.bot.get_chat_member(chat_id=FORCE_CHANNEL_USERNAME, user_id=user_id)
+        if member.status in ['member', 'administrator', 'creator']:
+            return True
+    except Exception:
+        pass
+    return False
 
 async def get_main_keyboard(user_id):
     active_slot = get_active_slot(user_id)
@@ -33,11 +49,7 @@ async def get_main_keyboard(user_id):
     is_stopped = slot_info[3] if slot_info else 0
     
     keyboard = []
-    if is_stopped:
-        keyboard.append([InlineKeyboardButton(f"🛑 Stop Slot {active_slot}", callback_data=f"stop_slot_{active_slot}"), InlineKeyboardButton("🚪 Logout", callback_data="logout_acc")])
-    else:
-        keyboard.append([InlineKeyboardButton(f"🛑 Stop Slot {active_slot}", callback_data=f"stop_slot_{active_slot}"), InlineKeyboardButton("🚪 Logout", callback_data="logout_acc")])
-        
+    keyboard.append([InlineKeyboardButton("🔑 Login / Add Accounts", callback_data="switch_acc")])
     keyboard.append([InlineKeyboardButton("📊 Status", callback_data="status"), InlineKeyboardButton("⚙️ Settings", callback_data="settings")])
     keyboard.append([InlineKeyboardButton("💎 Subscription", callback_data="subscription"), InlineKeyboardButton("💡 Help", callback_data="help")])
     keyboard.append([InlineKeyboardButton(f"🔄 Switch Account (Slot {active_slot})", callback_data="switch_acc")])
@@ -58,6 +70,27 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     save_user(user)
     
+    # Real-time channel membership check
+    is_joined = await check_channel_membership(user.id, context)
+    
+    if not is_joined:
+        join_text = (
+            "🚨 **Channel Join Required!** 🚨\n\n"
+            "Bot ko use karne ke liye aapko hamara official channel join karna zaroori hai. "
+            "Channel join karne ke baad niche diye gaye **'Check Membership'** button par click karein:"
+        )
+        keyboard = [
+            [InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{FORCE_CHANNEL_USERNAME.replace('@', '')}")],
+            [InlineKeyboardButton("🔄 Check Membership", callback_data="check_membership")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        if update.callback_query:
+            await update.callback_query.edit_message_text(join_text, parse_mode="Markdown", reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(join_text, parse_mode="Markdown", reply_markup=reply_markup)
+        return
+
     welcome_text = (
         "💎 **AdsNova Pro Bot - Main Menu** 💎\n\n"
         "✨ Premium Automation Service - Fast & Reliable\n"
@@ -73,29 +106,35 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    
+    if not await check_channel_membership(user_id, context):
+        query = update.callback_query
+        join_msg = "❌ Aapne channel leave kar diya hai! Pehle channel join karein phir dashboard access hoga."
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{FORCE_CHANNEL_USERNAME.replace('@', '')}"), InlineKeyboardButton("🔄 Check", callback_data="check_membership")]])
+        if query:
+            await query.edit_message_text(join_msg, reply_markup=kb)
+        else:
+            await update.message.reply_text(join_msg, reply_markup=kb)
+        return
 
-    # 👑 ADMIN DASHBOARD (Sirf Admin ke liye)
+    # 👑 ADMIN DASHBOARD
     if user_id == ADMIN_ID:
         try:
             import sqlite3
             conn = sqlite3.connect("bot_database.db")
             cursor = conn.cursor()
-            
             cursor.execute("SELECT COUNT(*) FROM users")
             total_users = cursor.fetchone()[0]
-            
             try:
                 cursor.execute("SELECT COUNT(*) FROM subscriptions WHERE expiry_date > ?", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"),))
                 prem_users = cursor.fetchone()[0]
             except Exception:
                 prem_users = 0
-            
             try:
                 cursor.execute("SELECT COUNT(*) FROM user_sessions WHERE is_stopped = 0")
                 active_ids = cursor.fetchone()[0]
             except Exception:
                 active_ids = 0
-                
             conn.close()
         except Exception:
             total_users, prem_users, active_ids = "N/A", "N/A", "N/A"
@@ -106,9 +145,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💎 Premium Users: {prem_users}\n"
             f"🚀 Currently Active IDs: {active_ids}\n"
         )
-        
         reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]])
-        
         if update.callback_query:
             await update.callback_query.edit_message_text(admin_text, parse_mode="Markdown", reply_markup=reply_markup)
         else:
@@ -128,10 +165,8 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     forwarding_status = "Stopped" if is_stopped else "Active (Running)"
     
     sub_status = "Active ✅" if is_premium(user_id) else "Inactive ❌"
-    
     groups = get_user_groups(user_id)
     sel_groups = sum(1 for g in groups if g[2] == 1)
-    
     msg_count = forwarded_counts.get(user_id, 0)
 
     status_text = (
@@ -159,12 +194,18 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    if not await check_channel_membership(user_id, context):
+        await update.message.reply_text("❌ Pehle channel join karein!")
+        return
     active_slot = get_active_slot(user_id)
     set_slot_stopped(user_id, active_slot, 1)
     await update.message.reply_text(f"🛑 Slot {active_slot} has been stopped successfully.")
 
 async def logout_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    if not await check_channel_membership(user_id, context):
+        await update.message.reply_text("❌ Pehle channel join karein!")
+        return
     active_slot = get_active_slot(user_id)
     remove_user_session(user_id, active_slot)
     await update.message.reply_text(f"🚪 Slot {active_slot} logged out successfully.")
@@ -172,59 +213,37 @@ async def logout_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Aap is command ko use nahi kar sakte!")
         return
     await update.message.reply_text(
-        "👑 **Admin Panel:**\n"
-        "- `/addsub <user_id>` (30 Days)\n"
-        "- `/delsub <user_id>`\n"
-        "- `/broadcast <message>` (Send message with start button)", 
+        "👑 **Admin Panel:**\n- `/addsub <user_id>`\n- `/delsub <user_id>`\n- `/broadcast <msg>`", 
         parse_mode="Markdown"
     )
 
 async def addsub_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Aap is command ko use nahi kar sakte!")
-        return
-    if not context.args:
-        await update.message.reply_text("❌ Kripya User ID bhi likhein!\nUsage: `/addsub <user_id>`", parse_mode="Markdown")
-        return
+    if update.effective_user.id != ADMIN_ID: return
+    if not context.args: return
     try:
-        target_user_id = int(context.args[0])
-        add_premium_subscription(target_user_id, days=30)
-        await update.message.reply_text(f"✅ User `{target_user_id}` ko 30 din ki Premium Subscription successfully de di gayi hai!", parse_mode="Markdown")
+        t_id = int(context.args[0])
+        add_premium_subscription(t_id, days=30)
+        await update.message.reply_text(f"✅ User `{t_id}` ko 30 din ka subscription mil gaya!", parse_mode="Markdown")
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {e}")
 
 async def delsub_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Aap is command ko use nahi kar sakte!")
-        return
-    if not context.args:
-        await update.message.reply_text("❌ Kripya User ID bhi likhein!\nUsage: `/delsub <user_id>`", parse_mode="Markdown")
-        return
+    if update.effective_user.id != ADMIN_ID: return
+    if not context.args: return
     try:
-        target_user_id = int(context.args[0])
-        remove_premium_subscription(target_user_id)
-        await update.message.reply_text(f"❌ User `{target_user_id}` ki subscription hata di gayi hai.", parse_mode="Markdown")
+        t_id = int(context.args[0])
+        remove_premium_subscription(t_id)
+        await update.message.reply_text(f"❌ User `{t_id}` ka subscription hata diya gaya.", parse_mode="Markdown")
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {e}")
 
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Aap Admin nahi hain!")
-        return
-    
-    if not context.args:
-        await update.message.reply_text("❌ Broadcast karne ke liye message likhein.\nUsage: `/broadcast <aapka message>`", parse_mode="Markdown")
-        return
-        
+    if update.effective_user.id != ADMIN_ID: return
+    if not context.args: return
     broadcast_msg = " ".join(context.args)
     bot_link = f"https://t.me/{BOT_USERNAME}"
-    
     keyboard = [[InlineKeyboardButton("🚀 Start AdsNova Pro", url=bot_link)]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -235,29 +254,37 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users = cursor.fetchall()
     conn.close()
     
-    msg_sent = 0
-    await update.message.reply_text(f"🚀 Broadcast shuru ho raha hai... (Total Users: {len(users)})")
-    
     for user in users:
         try:
-            await context.bot.send_message(
-                chat_id=user[0], 
-                text=broadcast_msg, 
-                parse_mode="Markdown", 
-                reply_markup=reply_markup
-            )
-            msg_sent += 1
-            await asyncio.sleep(0.1) 
+            await context.bot.send_message(chat_id=user[0], text=broadcast_msg, parse_mode="Markdown", reply_markup=reply_markup)
+            await asyncio.sleep(0.05)
         except Exception:
             continue
-            
-    await update.message.reply_text(f"✅ Broadcast complete! Total {msg_sent} users ko button ke sath message bhej diya gaya hai.")
+    await update.message.reply_text("✅ Broadcast complete!")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
     user_id = query.from_user.id
+
+    if data == "check_membership":
+        is_joined = await check_channel_membership(user_id, context)
+        if is_joined:
+            await start(update, context)
+        else:
+            await query.answer("❌ Aapne abhi tak channel join nahi kiya hai!", show_alert=True)
+        return
+
+    # Real-time channel membership check for all buttons
+    if not await check_channel_membership(user_id, context):
+        join_text = "❌ **Channel Join Required!**\nAapne channel leave kar diya hai. Bot use karne ke liye pehle channel join karein:"
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{FORCE_CHANNEL_USERNAME.replace('@', '')}")],
+            [InlineKeyboardButton("🔄 Check Membership", callback_data="check_membership")]
+        ])
+        await query.edit_message_text(join_text, parse_mode="Markdown", reply_markup=kb)
+        return
 
     if data == "main_menu":
         user_login_state.pop(user_id, None)
@@ -272,8 +299,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "💎 **Subscription Status & Details** 💎\n\n"
                 "🌟 Your Subscription: Active ✅\n"
                 "⏳ Expiry Date: `Lifetime (Admin) ♾️`\n"
-                "⏱️ Remaining Time: `Unlimited`\n\n"
-                "Aap bot ke Administrator hain!"
+                "⏱️ Remaining Time: `Unlimited`"
             )
         elif is_premium(user_id):
             expiry_str = get_user_expiry(user_id)
@@ -282,219 +308,137 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "💎 **Subscription Status & Details** 💎\n\n"
                 "🌟 Your Subscription: Active ✅\n"
                 f"⏳ Expiry Date: `{expiry_str}`\n"
-                f"⏱️ Remaining Time: `{remaining}`\n\n"
-                "Aapka plan active hai!"
+                f"⏱️ Remaining Time: `{remaining}`"
             )
         else:
             sub_text = (
                 "💎 **Subscription Status & Details** 💎\n\n"
                 "🌟 Your Subscription: Inactive ❌\n\n"
-                "Aapka subscription active nahi hai. Plan lene ke liye Bot Admin se sampark karein."
+                "Aapka subscription active nahi hai. Plan buy karne ke liye hamare Admin se sampark karein:"
             )
+        
+        keyboard = []
+        if user_id != ADMIN_ID and not is_premium(user_id):
+            keyboard.append([InlineKeyboardButton("🛒 Buy Subscription", url=f"https://t.me/{ADMIN_CONTACT_USERNAME}")])
+        keyboard.append([InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")])
             
-        await query.edit_message_text(
-            sub_text, 
-            parse_mode="Markdown", 
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]])
-        )
+        await query.edit_message_text(sub_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "switch_acc":
         sessions = get_user_sessions(user_id)
         filled_slots = len(sessions)
         active_slot = get_active_slot(user_id)
-        
         connected_slots = {s[0] for s in sessions}
         
         keyboard = []
         row = []
         for i in range(1, 21):
             icon = "🟢"
-            if i in connected_slots:
-                icon = "🔴"
-            if i == active_slot:
-                icon = "👉"
-            
+            if i in connected_slots: icon = "🔴"
+            if i == active_slot: icon = "👉"
             row.append(InlineKeyboardButton(f"{icon} {i}", callback_data=f"slot_click_{i}"))
             if len(row) == 5:
                 keyboard.append(row)
                 row = []
-        
         keyboard.append([InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")])
         
-        text = (
-            "🔄 **Switch Account**\n\n"
-            f"📍 You are currently using Slot {active_slot}.\n"
-            f"📊 {filled_slots}/20 slots filled\n\n"
-            "🔴 = Account connected | 🟢 = Empty slot\n"
-            "👉 = Currently active\n\n"
-            "👇 Select a slot to switch or login:"
-        )
+        text = f"🔄 **Switch Account**\n\n📍 Active Slot: {active_slot}\n📊 {filled_slots}/20 slots filled"
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("slot_click_"):
         slot_num = int(data.split("_")[2])
         slot_data = get_slot_session(user_id, slot_num)
-        
         if slot_data:
             set_active_slot(user_id, slot_num)
-            await query.edit_message_text(f"✅ Switched to Slot {slot_num} successfully!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
+            await query.edit_message_text(f"✅ Switched to Slot {slot_num}!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
         else:
             user_login_state[user_id] = {"step": "waiting_phone", "slot_number": slot_num}
-            await query.edit_message_text(
-                f"📱 **Telegram Account Login (Slot {slot_num})**\n\nKripya apna Phone Number country code ke sath bhejein (Jaise: +919876543210):", parse_mode="Markdown"
-            )
+            await query.edit_message_text(f"📱 **Telegram Account Login (Slot {slot_num})**\n\nApna Phone Number country code ke sath bhejein (Jaise: +919876543210):", parse_mode="Markdown")
 
     elif data.startswith("stop_slot_"):
         slot_num = int(data.split("_")[2])
         set_slot_stopped(user_id, slot_num, 1)
-        
-        text = (
-            f"🛑 **Slot {slot_num} Stopped**\n\n"
-            "Ad posting for this slot has been stopped. Other active slots continue running normally."
-        )
-        keyboard = [
-            [InlineKeyboardButton(f"▶️ Restart Slot {slot_num}", callback_data=f"restart_slot_{slot_num}")],
-            [InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]
-        ]
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-
-    elif data.startswith("restart_slot_"):
-        slot_num = int(data.split("_")[2])
-        set_slot_stopped(user_id, slot_num, 0)
-        set_active_slot(user_id, slot_num)
-        await start(update, context)
+        await query.edit_message_text(f"🛑 Slot {slot_num} Stopped.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
 
     elif data == "logout_acc":
         active_slot = get_active_slot(user_id)
         remove_user_session(user_id, active_slot)
-        await query.edit_message_text(f"🚪 Slot {active_slot} Logged Out Successfully!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
+        await query.edit_message_text(f"🚪 Slot {active_slot} Logged Out!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
 
     elif data == "settings":
         keyboard = [
-            [InlineKeyboardButton("📢 1 Source Channel Setup", callback_data="opt_1")],
-            [InlineKeyboardButton("👥 2 Auto Forward to Groups", callback_data="opt_2")],
-            [InlineKeyboardButton("⏱️ 3 Time Interval Settings", callback_data="opt_3")],
-            [InlineKeyboardButton("💬 4 Auto-Reply Share Message", callback_data="opt_4")],
+            [InlineKeyboardButton("📢 Source Channel Setup", callback_data="opt_1")],
+            [InlineKeyboardButton("👥 Auto Forward to Groups", callback_data="opt_2")],
+            [InlineKeyboardButton("⏱️ Time Interval Settings", callback_data="opt_3")],
+            [InlineKeyboardButton("💬 Auto-Reply Share Message", callback_data="opt_4")],
             [InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]
         ]
-        await query.edit_message_text("⚙️ **AdsNova Settings Menu**\n\nAap apni zaroorat ke mutabiq option chun sakte hain:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text("⚙️ **Settings Menu**", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "opt_1" or data.startswith("set_chan_sel_"):
         channels = get_user_channels(user_id)
         if not channels:
-            await query.edit_message_text(
-                "❌ **Aapke account mein koi channel nahi mila!**\n\nPlz join the channel and forward your message", 
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]])
-            )
+            await query.edit_message_text("❌ Koi channel nahi mila!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="settings")]]))
             return
-
         if data.startswith("set_chan_sel_"):
             idx = int(data.split("_")[3])
             c_name = channels[idx][1]
             set_source_channel(user_id, c_name)
-            await query.edit_message_text(
-                f"✅ Source Channel Successfully Set to '{c_name}'!", 
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]])
-            )
+            await query.edit_message_text(f"✅ Channel Set: '{c_name}'", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="settings")]]))
             return
+        keyboard = [[InlineKeyboardButton(f"📌 {cname}", callback_data=f"set_chan_sel_{i}")] for i, (cid, cname) in enumerate(channels)]
+        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="settings")])
+        await query.edit_message_text("📢 **Select Source Channel**", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
-        keyboard = []
-        for index, (cid, cname) in enumerate(channels):
-            keyboard.append([InlineKeyboardButton(f"📌 {cname}", callback_data=f"set_chan_sel_{index}")])
-        keyboard.append([InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")])
-
-        text = f"📢 **Select Source Channel**\n\nChoose the channel to forward ads from:\nShowing 1-{len(channels)} of {len(channels)}"
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-        return
-
-    elif data == "opt_2" or data.startswith("grp_page_") or data.startswith("grp_tog_") or data == "grp_select_all" or data == "grp_deselect_all" or data == "grp_done":
+    elif data == "opt_2" or data.startswith("grp_page_") or data.startswith("grp_tog_") or data in ["grp_select_all", "grp_deselect_all", "grp_done"]:
         groups = get_user_groups(user_id)
         if not groups:
-            await query.edit_message_text("❌ **Aapke account mein koi group nahi mila!**\n\nPlz join the group and forward your message", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
+            await query.edit_message_text("❌ Koi group nahi mila!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="settings")]]))
             return
-
         total_groups = len(groups)
         page = 0
-        if data.startswith("grp_page_"):
-            page = int(data.split("_")[2])
+        if data.startswith("grp_page_"): page = int(data.split("_")[2])
         elif data.startswith("grp_tog_"):
             parts = data.split("_")
-            g_id = parts[2]
+            toggle_group_selection(user_id, parts[2])
             page = int(parts[3])
-            toggle_group_selection(user_id, g_id)
             groups = get_user_groups(user_id)
-        elif data == "grp_select_all":
-            set_all_groups_selection(user_id, 1)
-            groups = get_user_groups(user_id)
-        elif data == "grp_deselect_all":
-            set_all_groups_selection(user_id, 0)
-            groups = get_user_groups(user_id)
+        elif data == "grp_select_all": set_all_groups_selection(user_id, 1); groups = get_user_groups(user_id)
+        elif data == "grp_deselect_all": set_all_groups_selection(user_id, 0); groups = get_user_groups(user_id)
         elif data == "grp_done":
-            await query.edit_message_text("✅ Selected groups successfully saved for auto-forwarding!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
+            await query.edit_message_text("✅ Groups saved!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="settings")]]))
             return
 
         per_page = 10
         start_idx = page * per_page
         end_idx = min(start_idx + per_page, total_groups)
-        current_groups = groups[start_idx:end_idx]
-
-        keyboard = []
-        for g_id, g_name, is_sel in current_groups:
-            icon = "✅" if is_sel == 1 else "☑️"
-            keyboard.append([InlineKeyboardButton(f"{icon} {g_name}", callback_data=f"grp_tog_{g_id}_{page}")])
-
-        nav_buttons = []
-        if page > 0:
-            nav_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"grp_page_{page-1}"))
-        if end_idx < total_groups:
-            nav_buttons.append(InlineKeyboardButton("➡️ Next", callback_data=f"grp_page_{page+1}"))
-        if nav_buttons:
-            keyboard.append(nav_buttons)
-
-        keyboard.append([
-            InlineKeyboardButton("☑️ Select All", callback_data="grp_select_all"),
-            InlineKeyboardButton("🔲 Deselect All", callback_data="grp_deselect_all")
-        ])
+        keyboard = [[InlineKeyboardButton(f"{'✅' if is_sel == 1 else '☑️'} {g_name}", callback_data=f"grp_tog_{g_id}_{page}")] for g_id, g_name, is_sel in groups[start_idx:end_idx]]
+        
+        nav = []
+        if page > 0: nav.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"grp_page_{page-1}"))
+        if end_idx < total_groups: nav.append(InlineKeyboardButton("➡️ Next", callback_data=f"grp_page_{page+1}"))
+        if nav: keyboard.append(nav)
+        keyboard.append([InlineKeyboardButton("Select All", callback_data="grp_select_all"), InlineKeyboardButton("Deselect", callback_data="grp_deselect_all")])
         keyboard.append([InlineKeyboardButton("✔️ Done", callback_data="grp_done")])
-        keyboard.append([InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")])
-
-        text = f"👥 **Select Target Groups**\n\nShowing {start_idx + 1}-{end_idx} of {total_groups}\n\nTap groups to select/deselect:"
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="settings")])
+        await query.edit_message_text(f"👥 **Select Groups** ({start_idx+1}-{end_idx} of {total_groups})", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "opt_3":
-        config = get_bot_config(user_id)
-        current_time = config[1] if config else 30
         keyboard = [
-            [InlineKeyboardButton("⚡ 20s", callback_data="time_20"), InlineKeyboardButton("⚡ 30s", callback_data="time_30"), InlineKeyboardButton("⚡ 60s", callback_data="time_60")],
-            [InlineKeyboardButton("⚡ 120s", callback_data="time_120"), InlineKeyboardButton("⚡ 300s", callback_data="time_300")],
-            [InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]
+            [InlineKeyboardButton("20s", callback_data="time_20"), InlineKeyboardButton("30s", callback_data="time_30"), InlineKeyboardButton("60s", callback_data="time_60")],
+            [InlineKeyboardButton("120s", callback_data="time_120"), InlineKeyboardButton("300s", callback_data="time_300")],
+            [InlineKeyboardButton("🔙 Back", callback_data="settings")]
         ]
-        await query.edit_message_text(f"⏱️ **Time Interval Settings**\n\nCurrent Active Time: {current_time} seconds\nNeeche se naya time select karein:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text("⏱️ **Select Time Interval**", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("time_"):
-        t_val = data.split("_")[1]
-        set_time_interval(user_id, int(t_val))
-        await query.edit_message_text(f"✅ Time Interval Successfully Set to {t_val}s!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
+        set_time_interval(user_id, int(data.split("_")[1]))
+        await query.edit_message_text(f"✅ Time set successfully!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="settings")]]))
 
     elif data == "opt_4":
-        if user_id != ADMIN_ID:
-            await query.edit_message_text(
-                "❌ **Access Denied!**\n\nYeh custom message sirf Bot ka Admin hi change kar sakta hai.",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]])
-            )
-            return
-
+        if user_id != ADMIN_ID: return
         user_login_state[user_id] = {"step": "waiting_custom_msg"}
-        current_msg = get_custom_share_message(ADMIN_ID)
-        await query.edit_message_text(
-            f"💬 **Custom Auto-Reply Share Message (Admin Only)**\n\n"
-            f"Aapka current fix message yeh hai:\n`{current_msg}`\n\n"
-            f"Kripya apna naya message bhejein jo aap hamesha ke liye fix karna chahte hain:", 
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]])
-        )
+        await query.edit_message_text("💬 Apna naya custom share message bhejein:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="settings")]]))
 
 def main():
     init_db()
