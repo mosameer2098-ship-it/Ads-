@@ -2,12 +2,6 @@
 
 <p align="center">
 <a href="https://dashboard.heroku.com/new?template=https://github.com/mosameer2098-ship-it/Ads-">
-<img src="https://www.herokucdn.com/deploy/button.svg" alt="Deploy">
+  <img src="https://img.shields.io/badge/DEPLOYS%20ON%20HEROKU-black?style=for-the-badge&logo=heroku&logoColor=white" width="250" height="45">
 </a>
 </p>
-
-### 🛠️ Quick Setup
-
-**1. Upgrade & Update:**
-```bash
-sudo apt-get update && sudo apt-get upgrade -y
