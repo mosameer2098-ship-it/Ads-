@@ -16,8 +16,8 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [8453975447]
 
-API_ID = 6
-API_HASH = "eb06d4abfb49dc3eeb1aeb98ae0f581e"
+API_ID = "28658897"
+API_HASH = "1b86d8b5393535a52b66360acc6a5a99"
 
 user_login_state = {}
 
