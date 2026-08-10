@@ -255,7 +255,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         slot_data = get_slot_session(user_id, active_slot)
         
         login_status = "Logged In" if slot_data else "Not Logged In"
-        acc_id = slot_data[1] if slot_data else "N/A"
         acc_name = slot_data[2] if slot_data else "N/A"
         is_stopped = slot_data[3] if slot_data else 0
         forwarding_status = "Stopped" if is_stopped else "Active (Running)"
@@ -275,7 +274,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Posting Interval: {t_int} seconds\n\n"
             f"Messages Forwarded: 0\n\n"
             f"Logged-in Account Details\n"
-            f"Account ID: {acc_id}\n"
+            f"Account Status: Connected ✅\n"
             f"Name: {acc_name}"
         )
         await query.edit_message_text(status_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(f"Stop Slot {active_slot}", callback_data=f"stop_slot_{active_slot}"), InlineKeyboardButton("Back to Menu", callback_data="main_menu")]]))
@@ -430,7 +429,7 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message_input))
     
-    print("Bot is running with original UI and accurate channel filter...")
+    print("Bot is running with final fixes...")
     app.run_polling()
 
 if __name__ == "__main__":
