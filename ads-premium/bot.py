@@ -84,7 +84,7 @@ def dashboard_keyboard():
     ])
 
 async def show_dashboard(update):
-    text = "🤖 <b>Ads Premium Bot</b>\n\n🏠 <b>Main Dashboard</b>\n\nNeeche se koi option select karein."
+    text = "🤖 <b>Ads Nova Bot</b> (@AdsNova0)\n\n🏠 <b>Main Dashboard</b>\n\nNeeche se koi option select karein."
     if update.callback_query:
         await update.callback_query.message.edit_text(text, parse_mode="HTML", reply_markup=dashboard_keyboard())
     else:
@@ -101,9 +101,14 @@ def user_has_premium(user_id):
 async def premium_required(query):
     if query.from_user.id == ADMIN_ID:
         return False
-    text = f"🔒 <b>Premium Required</b>\n\nYe feature use karne ke liye Premium subscription required hai (30 Days plan).\n\n💎 Premium Price: <b>₹{PREMIUM_PRICE}</b>"
+    text = (
+        f"🔒 <b>Premium Required</b>\n\n"
+        f"Ye feature use karne ke liye Premium subscription required hai (30 Days plan).\n\n"
+        f"💎 Premium Price: <b>₹{PREMIUM_PRICE}</b>\n\n"
+        f"✨ Premium buy karne ke liye message karein: <b>@AdsNova0</b>"
+    )
     keyboard = [
-        [InlineKeyboardButton(f"💎 Buy Premium ₹{PREMIUM_PRICE}", callback_data="buy_premium")],
+        [InlineKeyboardButton("💎 Buy Premium (Message Admin)", url="https://t.me/AdsNova0")],
         [InlineKeyboardButton("↩️ Back", callback_data="dashboard")]
     ]
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -135,7 +140,7 @@ async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "👑 <b>Admin Access Panel</b>\n\n"
         "💎 Premium: Active\n"
-        "🟢 Bot: Online\n\n"
+        "🟢 Bot: Online (@AdsNova0)\n\n"
         "Use <code>/addsub &lt;user_id&gt;</code> to grant 30 days subscription."
     )
     await update.message.reply_text(text, parse_mode="HTML")
@@ -200,14 +205,41 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "subscription":
         status = "🟢 Active (30 Days)" if user_has_premium(user_id) else "❌ Not Active"
-        text = f"💎 <b>Premium Subscription</b>\n\n💰 Price: <b>₹{PREMIUM_PRICE} / 30 Days</b>\n📊 Status: <b>{status}</b>"
+        text = (
+            f"💎 <b>Premium Subscription</b>\n\n"
+            f"💰 Price: <b>₹{PREMIUM_PRICE} / 30 Days</b>\n"
+            f"📊 Status: <b>{status}</b>\n\n"
+            f"✨ Premium buy karne ke liye message karein: <b>@AdsNova0</b>"
+        )
         keyboard = [
-            [InlineKeyboardButton(f"💎 Buy Premium ₹{PREMIUM_PRICE}", callback_data="buy_premium")],
+            [InlineKeyboardButton("💎 Buy Premium (Message Admin)", url="https://t.me/AdsNova0")],
             [InlineKeyboardButton("↩️ Back", callback_data="dashboard")]
         ]
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
+    if action == "help":
+        await query.edit_message_text(
+            "❓ <b>Help Centre</b>\n\nKisi bhi madad ke liye contact karein: <b>@AdsNova0</b>",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Back", callback_data="dashboard")]])
+        )
+        return
+
+    if action == "buy_premium":
+        await query.edit_message_text(
+            f"💎 <b>Buy Premium Subscription</b>\n\n"
+            f"Price: <b>₹{PREMIUM_PRICE} for 30 Days</b>\n\n"
+            f"Subscription lene ke liye message karein: <b>@AdsNova0</b>",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("💎 Message @AdsNova0", url="https://t.me/AdsNova0")],
+                [InlineKeyboardButton("↩️ Back", callback_data="dashboard")]
+            ])
+        )
+        return
+
+    # Strictly restrict all functional buttons for normal users
     if action in {"login", "status", "settings", "switch_account", "set_source_channel", "set_auto_forward", "set_time_interval", "set_option_four", "set_auto_share"}:
         if not user_has_premium(user_id):
             if await premium_required(query):
@@ -343,17 +375,9 @@ async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             "🤖 <b>Option 5: Auto-Reply Share Message</b>\n\n"
             "Jaise hi koi ID login hogi aur personal messages aayenge, yeh message sabko share hoga:\n"
-            "<code>@Iqraxmusic_bot start and get video free</code>",
+            "<code>@AdsNova0 start and get video free</code>",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Back to Settings", callback_data="settings")]])
-        )
-        return
-
-    if action == "help":
-        await query.edit_message_text(
-            "❓ <b>Help Centre</b>\n\nKisi bhi madad ke liye admin se sampark karein.",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Back", callback_data="dashboard")]])
         )
         return
 
