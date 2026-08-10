@@ -5,7 +5,7 @@ def init_db():
     conn = sqlite3.connect("bot_database.db", check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT, is_premium INTEGER DEFAULT 0, expiry_date TEXT)")
-    cursor.execute("CREATE TABLE IF NOT EXISTS user_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, slot_num INTEGER, phone TEXT, session_string TEXT, account_name TEXT, account_id TEXT)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS user_sessions (user_id INTEGER PRIMARY KEY, phone TEXT, session_string TEXT, account_name TEXT)")
     cursor.execute("CREATE TABLE IF NOT EXISTS bot_config (user_id INTEGER PRIMARY KEY, source_channel TEXT, time_interval INTEGER DEFAULT 30)")
     cursor.execute("CREATE TABLE IF NOT EXISTS user_groups (user_id INTEGER, group_id TEXT, group_name TEXT, is_selected INTEGER DEFAULT 0)")
     cursor.execute("CREATE TABLE IF NOT EXISTS user_channels (user_id INTEGER, channel_id TEXT, channel_name TEXT)")
@@ -33,12 +33,10 @@ def is_premium(user_id):
         if exp_str:
             try:
                 exp_date = datetime.strptime(exp_str, "%d-%m-%Y")
-                current_date = datetime.now()
-                if current_date > exp_date:
+                if datetime.now() > exp_date:
                     remove_subscription_by_id(user_id)
                     return False
-            except Exception as e:
-                print(f"Date check error: {e}")
+            except:
                 pass
         return True
     return False
@@ -61,10 +59,8 @@ def get_remaining_days(user_id):
     if row and row[0]:
         try:
             exp_date = datetime.strptime(row[0], "%d-%m-%Y")
-            # Compare dates ignoring hours/minutes so it updates dynamically each day
             delta = exp_date.date() - datetime.now().date()
-            days = delta.days
-            return max(days, 0)
+            return max(delta.days, 0)
         except:
             pass
     return 30
@@ -108,6 +104,41 @@ def get_all_premium_users():
         active_rows.append((uid, uname, expiry))
     return active_rows
 
+def save_user_session(user_id, phone, session_string, account_name):
+    conn = sqlite3.connect("bot_database.db", check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO user_sessions (user_id, phone, session_string, account_name) VALUES (?, ?, ?, ?)", 
+                   (user_id, phone, session_string, account_name))
+    conn.commit()
+    conn.close()
+
+def get_user_session(user_id):
+    conn = sqlite3.connect("bot_database.db", check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("SELECT phone, session_string, account_name FROM user_sessions WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+def save_real_groups_and_channels(user_id, groups, channels):
+    conn = sqlite3.connect("bot_database.db", check_same_thread=False)
+    cursor = conn.cursor()
+    
+    # Clear old data
+    cursor.execute("DELETE FROM user_groups WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM user_channels WHERE user_id = ?", (user_id,))
+    
+    # Insert real groups
+    for g_id, g_name in groups:
+        cursor.execute("INSERT INTO user_groups (user_id, group_id, group_name, is_selected) VALUES (?, ?, ?, 0)", (user_id, str(g_id), g_name))
+        
+    # Insert real channels
+    for c_id, c_name in channels:
+        cursor.execute("INSERT INTO user_channels (user_id, channel_id, channel_name) VALUES (?, ?, ?)", (user_id, str(c_id), c_name))
+        
+    conn.commit()
+    conn.close()
+
 def get_bot_config(user_id):
     conn = sqlite3.connect("bot_database.db", check_same_thread=False)
     cursor = conn.cursor()
@@ -133,13 +164,6 @@ def set_time_interval(user_id, interval):
 def get_user_channels(user_id):
     conn = sqlite3.connect("bot_database.db", check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM user_channels WHERE user_id = ?", (user_id,))
-    if cursor.fetchone()[0] == 0:
-        sample_chans = [("c_1", "DELHI FRIENDSHIP (free)"), ("c_2", "Live couple show"), ("c_3", "Permotion")]
-        for cid, cname in sample_chans:
-            cursor.execute("INSERT INTO user_channels (user_id, channel_id, channel_name) VALUES (?, ?, ?)", (user_id, cid, cname))
-        conn.commit()
-    
     cursor.execute("SELECT channel_id, channel_name FROM user_channels WHERE user_id = ?", (user_id,))
     rows = cursor.fetchall()
     conn.close()
@@ -148,12 +172,6 @@ def get_user_channels(user_id):
 def get_user_groups(user_id):
     conn = sqlite3.connect("bot_database.db", check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM user_groups WHERE user_id = ?", (user_id,))
-    if cursor.fetchone()[0] == 0:
-        for i in range(1, 41):
-            cursor.execute("INSERT INTO user_groups (user_id, group_id, group_name, is_selected) VALUES (?, ?, ?, 0)", (user_id, f"g_{i}", f"Promotion Group {i}"))
-        conn.commit()
-    
     cursor.execute("SELECT group_id, group_name, is_selected FROM user_groups WHERE user_id = ?", (user_id,))
     rows = cursor.fetchall()
     conn.close()
