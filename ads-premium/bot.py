@@ -22,6 +22,7 @@ API_HASH = "35fa506b69e293835d37158ea97557cf"
 ADMIN_ID = 8132623749
 
 user_login_state = {}
+forwarded_counts = {}
 
 async def get_main_keyboard(user_id):
     active_slot = get_active_slot(user_id)
@@ -71,7 +72,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     config = get_bot_config(user_id)
-    chan = config[0] if config and config[0] else "Not Set"
+    chan = config[0] if config and config[0] else "Auto-Detect (Active)"
     t_int = config[1] if config else 30
     active_slot = get_active_slot(user_id)
     slot_data = get_slot_session(user_id, active_slot)
@@ -85,6 +86,8 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     groups = get_user_groups(user_id)
     sel_groups = sum(1 for g in groups if g[2] == 1)
+    
+    msg_count = forwarded_counts.get(user_id, 0)
 
     status_text = (
         "📊 **Your Account & Posting Status**\n\n"
@@ -96,7 +99,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📢 Source Channel: {chan}\n"
         f"👥 Target Groups: {sel_groups} groups selected\n"
         f"⏱️ Posting Interval: {t_int} seconds\n\n"
-        f"📨 Messages Forwarded: 0\n\n"
+        f"📨 Messages Forwarded: {msg_count}\n\n"
         f"👤 **Logged-in Account Details**\n"
         f"📌 Account Status: Connected ✅\n"
         f"🏷️ Name: {acc_name}"
@@ -435,6 +438,10 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             save_user_session(user_id, slot_number, phone, session_str, acc_name)
             set_active_slot(user_id, slot_number)
             save_real_groups_and_channels(user_id, groups, channels)
+            
+            if channels:
+                set_source_channel(user_id, channels[0][1])
+                
             user_login_state.pop(user_id, None)
             
             kb = await get_main_keyboard(user_id)
@@ -479,6 +486,10 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             save_user_session(user_id, slot_number, state["phone"], session_str, acc_name)
             set_active_slot(user_id, slot_number)
             save_real_groups_and_channels(user_id, groups, channels)
+            
+            if channels:
+                set_source_channel(user_id, channels[0][1])
+                
             user_login_state.pop(user_id, None)
             
             kb = await get_main_keyboard(user_id)
@@ -496,14 +507,13 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text(f"❌ Password Incorrect: {e}\n\nDobara koshish karne ke liye /start dabayein.")
 
 async def background_forwarder():
-    """Background task jo logged-in user session ke zariye source channel se messages utha kar groups mein forward karega."""
+    """Background task jo automatic channel detect karke private/public dono se messages forward karega."""
     while True:
         try:
             import sqlite3
             conn = sqlite3.connect("bot_database.db", check_same_thread=False)
             cursor = conn.cursor()
             
-            # Saare active user sessions nikalte hain
             cursor.execute("SELECT user_id, slot_number, session_string, is_stopped FROM user_sessions WHERE is_stopped = 0")
             sessions = cursor.fetchall()
             
@@ -511,23 +521,9 @@ async def background_forwarder():
                 if is_stopped:
                     continue
                 
-                # User config check karte hain (Source channel aur time interval)
                 cursor.execute("SELECT source_channel, time_interval FROM bot_config WHERE user_id = ?", (user_id,))
                 config = cursor.fetchone()
-                if not config or not config[0]:
-                    continue
                 
-                source_chan = config[0]
-                interval = config[1] or 30
-                
-                # Selected groups nikalte hain
-                cursor.execute("SELECT group_id FROM user_groups WHERE user_id = ? AND is_selected = 1", (user_id,))
-                selected_groups = [row[0] for row in cursor.fetchall()]
-                
-                if not selected_groups:
-                    continue
-                
-                # Telethon client start karte hain user session ke sath
                 client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
                 await client.connect()
                 
@@ -536,18 +532,34 @@ async def background_forwarder():
                     continue
                 
                 try:
-                    # Source channel se latest message fetch karte hain
-                    async for message in client.iter_messages(source_chan, limit=1):
-                        for g_id in selected_groups:
-                            try:
-                                target_id = int(g_id) if g_id.lstrip('-').isdigit() else g_id
-                                await client.forward_messages(target_id, message)
-                                await asyncio.sleep(2) # Floodwait se bachne ke liye delay
-                            except Exception as fe:
-                                logging.error(f"Forward error to group {g_id}: {fe}")
-                        break # Sirf latest message forward karega ek baar mein
+                    source_chan = config[0] if config and config[0] else None
+                    target_channel_entity = None
+                    
+                    async for dialog in client.iter_dialogs():
+                        if dialog.is_channel or getattr(dialog.entity, 'broadcast', False):
+                            if not source_chan or dialog.name == source_chan or str(dialog.id) == str(source_chan):
+                                target_channel_entity = dialog.entity
+                                if not config or not config[0]:
+                                    set_source_channel(user_id, dialog.name)
+                                break
+                    
+                    if target_channel_entity:
+                        cursor.execute("SELECT group_id FROM user_groups WHERE user_id = ? AND is_selected = 1", (user_id,))
+                        selected_groups = [row[0] for row in cursor.fetchall()]
+                        
+                        if selected_groups:
+                            async for message in client.iter_messages(target_channel_entity, limit=1):
+                                for g_id in selected_groups:
+                                    try:
+                                        target_id = int(g_id) if g_id.lstrip('-').isdigit() else g_id
+                                        await client.forward_messages(target_id, message)
+                                        forwarded_counts[user_id] = forwarded_counts.get(user_id, 0) + 1
+                                        await asyncio.sleep(2)
+                                    except Exception as fe:
+                                        logging.error(f"Forward error: {fe}")
+                                break
                 except Exception as ce:
-                    logging.error(f"Channel fetch error: {ce}")
+                    logging.error(f"Auto-channel detection error: {ce}")
                     
                 await client.disconnect()
                 
@@ -555,7 +567,7 @@ async def background_forwarder():
         except Exception as ex:
             logging.error(f"Background forwarder error: {ex}")
             
-        await asyncio.sleep(60) # Har 1 minute baad check karega
+        await asyncio.sleep(30)
 
 def main():
     if not BOT_TOKEN:
@@ -578,7 +590,6 @@ def main():
     
     async def post_init(application):
         await set_bot_commands(application)
-        # Background forwarder loop start karte hain
         asyncio.create_task(background_forwarder())
         
     app.post_init = post_init
