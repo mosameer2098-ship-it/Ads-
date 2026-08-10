@@ -1,7 +1,7 @@
 import os
 import asyncio
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -10,13 +10,16 @@ from database import (init_db, save_user, is_premium, get_user_expiry, get_bot_c
                       toggle_group_selection, set_all_groups_selection, get_user_channels, 
                       get_remaining_days, save_user_session, get_user_sessions, 
                       save_real_groups_and_channels, get_active_slot, set_active_slot, 
-                      get_slot_session, remove_user_session, set_slot_stopped)
+                      get_slot_session, remove_user_session, set_slot_stopped,
+                      add_premium_subscription, remove_premium_subscription)
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 API_ID = 32222378
 API_HASH = "35fa506b69e293835d37158ea97557cf"
+
+ADMIN_ID = 8132623749
 
 user_login_state = {}
 
@@ -37,6 +40,16 @@ async def get_main_keyboard(user_id):
     keyboard.append([InlineKeyboardButton("✨ Refresh", callback_data="refresh"), InlineKeyboardButton("🛠️ Help Centre", callback_data="help")])
     keyboard.append([InlineKeyboardButton("🤖 TG ID BOT", url="https://t.me/useridinfobot")])
     return InlineKeyboardMarkup(keyboard)
+
+async def set_bot_commands(application):
+    user_commands = [
+        BotCommand("start", "Start the bot 🚀"),
+        BotCommand("menu", "Open main menu 📋"),
+        BotCommand("status", "Check posting status 📊"),
+        BotCommand("stop", "Stop ad posting ⏹️"),
+        BotCommand("logout", "Logout from account 🚪"),
+    ]
+    await application.bot.set_my_commands(user_commands)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -68,6 +81,8 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_stopped = slot_data[3] if slot_data else 0
     forwarding_status = "Stopped" if is_stopped else "Active (Running)"
     
+    sub_status = "Active ✅" if is_premium(user_id) else "Inactive ❌"
+    
     groups = get_user_groups(user_id)
     sel_groups = sum(1 for g in groups if g[2] == 1)
 
@@ -76,7 +91,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🆔 User ID: `{user_id}`\n"
         f"📂 Active Account Slot: Slot {active_slot}\n"
         f"🔐 Login Status: {login_status}\n"
-        f"🌟 Subscription: Active\n\n"
+        f"🌟 Subscription: {sub_status}\n\n"
         f"🚀 Forwarding Status: {forwarding_status}\n"
         f"📢 Source Channel: {chan}\n"
         f"👥 Target Groups: {sel_groups} groups selected\n"
@@ -101,7 +116,41 @@ async def logout_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🚪 Slot {active_slot} logged out successfully.")
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👑 **Admin Panel:**\n- `/addsub <user_id>`\n- `/delsub <user_id>`", parse_mode="Markdown")
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Aap is command ko use nahi kar sakte!")
+        return
+    await update.message.reply_text("👑 **Admin Panel:**\n- `/addsub <user_id>` (30 Days)\n- `/delsub <user_id>`", parse_mode="Markdown")
+
+async def addsub_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Aap is command ko use nahi kar sakte!")
+        return
+    if not context.args:
+        await update.message.reply_text("❌ Kripya User ID bhi likhein!\nUsage: `/addsub <user_id>`", parse_mode="Markdown")
+        return
+    try:
+        target_user_id = int(context.args[0])
+        add_premium_subscription(target_user_id, days=30)
+        await update.message.reply_text(f"✅ User `{target_user_id}` ko 30 din ki Premium Subscription successfully de di gayi hai!", parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
+
+async def delsub_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Aap is command ko use nahi kar sakte!")
+        return
+    if not context.args:
+        await update.message.reply_text("❌ Kripya User ID bhi likhein!\nUsage: `/delsub <user_id>`", parse_mode="Markdown")
+        return
+    try:
+        target_user_id = int(context.args[0])
+        remove_premium_subscription(target_user_id)
+        await update.message.reply_text(f"❌ User `{target_user_id}` ki subscription hata di gayi hai.", parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -305,7 +354,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rem_days = get_remaining_days(user_id)
             sub_text = (
                 "💎 **Your Premium Subscription**\n\n"
-                "✨ Status: Active\n"
+                "✨ Status: Active ✅\n"
                 f"⏳ Days Remaining: {rem_days} Days\n"
                 f"📅 Expiry Date: {expiry}\n\n"
                 "🎉 Aapke paas sabhi features unlocked hain!"
@@ -453,11 +502,15 @@ def main():
     app.add_handler(CommandHandler("stop", stop_command))
     app.add_handler(CommandHandler("logout", logout_command))
     app.add_handler(CommandHandler("admin", admin_command))
+    app.add_handler(CommandHandler("addsub", addsub_command))
+    app.add_handler(CommandHandler("delsub", delsub_command))
     
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message_input))
     
-    print("Bot is running with beautiful emojis and all features...")
+    app.job_queue.run_once(lambda context: asyncio.create_task(set_bot_commands(app)), 1)
+    
+    print("Bot is running perfectly...")
     app.run_polling()
 
 if __name__ == "__main__":
