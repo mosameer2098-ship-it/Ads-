@@ -1,3 +1,4 @@
+import os
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler
@@ -7,7 +8,9 @@ from database import (init_db, save_user, is_premium, get_user_expiry, get_bot_c
                       toggle_group_selection, set_all_groups_selection, get_user_channels)
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-BOT_TOKEN = "8999765663:AAHOS2-3WUrXjDYQIE_5NQhe1e7SHFTyGY"
+
+# Token ab sirf environment variable se aayega
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 ADMIN_IDS = [8453975447]
 
@@ -223,6 +226,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🔄 Process executed successfully!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]), parse_mode="Markdown")
 
 def main():
+    if not BOT_TOKEN:
+        print("❌ Error: BOT_TOKEN environment variable set nahi hai!")
+        return
     init_db()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     
