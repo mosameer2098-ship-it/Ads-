@@ -1,12 +1,14 @@
-   import logging
+import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler
-from database import init_db, save_user, is_premium, get_user_expiry, get_bot_config, set_source_channel, set_time_interval, add_subscription_by_id, remove_subscription_by_id, get_all_premium_users
+from database import (init_db, save_user, is_premium, get_user_expiry, get_bot_config, 
+                      set_source_channel, set_time_interval, add_subscription_by_id, 
+                      remove_subscription_by_id, get_all_premium_users, get_user_groups, 
+                      toggle_group_selection, set_all_groups_selection, get_user_channels)
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 BOT_TOKEN = "8999765663:AAHOS2-3WUrXjDYQIE_5NQhe1e7SHFTyGY"
 
-# Aapki Admin ID
 ADMIN_IDS = [8453975447]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -45,7 +47,7 @@ async def list_premium_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     prem_users = get_all_premium_users()
-    if notprem := not prem_users:
+    if not prem_users:
         await update.message.reply_text("ℹ️ Filhal koi bhi active premium user nahi hai.")
         return
 
@@ -112,39 +114,76 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await query.edit_message_text("🏠 **Main Dashboard**\n\nNeeche se koi option select karein.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
-    elif data == "opt_1":
-        keyboard = [
-            [InlineKeyboardButton("📢 @MySampleChannel1", callback_data="set_chan_1")],
-            [InlineKeyboardButton("📢 @OfficialUpdatesChannel", callback_data="set_chan_2")],
-            [InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]
-        ]
-        await query.edit_message_text("📢 **Option 1: Source Channel Setup**\n\nAapke account ke yeh channels mile hain. Ek select karein:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    elif data == "opt_1" or data.startswith("set_chan_sel_"):
+        channels = get_user_channels(user_id)
+        if data.startswith("set_chan_sel_"):
+            c_name = data.split("_", 3)[3]
+            set_source_channel(user_id, c_name)
+            await query.edit_message_text(f"✅ **Source Channel Successfully Set to '{c_name}'!**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]), parse_mode="Markdown")
+            return
 
-    elif data.startswith("set_chan_"):
-        set_source_channel(user_id, "Selected Channel")
-        await query.edit_message_text("✅ **Source Channel Successfully Set ho gaya hai!**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]), parse_mode="Markdown")
+        keyboard = []
+        for cid, cname in channels:
+            keyboard.append([InlineKeyboardButton(f"📢 {cname}", callback_data=f"set_chan_sel_{cid}_{cname}")])
+        keyboard.append([InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")])
 
-    elif data == "opt_2":
-        keyboard = [
-            [InlineKeyboardButton("☑️ Group A", callback_data="grp_t1"), InlineKeyboardButton("✅ Group B", callback_data="grp_t2")],
-            [InlineKeyboardButton("☑️ Group C", callback_data="grp_t3"), InlineKeyboardButton("☑️ Group D", callback_data="grp_t4")],
-            [InlineKeyboardButton("🟢 Select All", callback_data="grp_select_all")],
-            [InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]
-        ]
-        await query.edit_message_text("👥 **Option 2: Auto Forward to Groups**\n\nJin groups mein message forward karna hai unhein select karein:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        text = f"📢 **Select Source Channel**\n\nChoose the channel to forward ads from:\nShowing 1-{len(channels)} of {len(channels)}"
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
-    elif data == "grp_select_all":
-        keyboard = [
-            [InlineKeyboardButton("✅ Group A", callback_data="grp_t1"), InlineKeyboardButton("✅ Group B", callback_data="grp_t2")],
-            [InlineKeyboardButton("✅ Group C", callback_data="grp_t3"), InlineKeyboardButton("✅ Group D", callback_data="grp_t4")],
-            [InlineKeyboardButton("🟢 Selected All", callback_data="grp_select_all")],
-            [InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]
-        ]
-        await query.edit_message_text("👥 **Option 2: Auto Forward to Groups**\n\nSabhi groups select ho chuke hain ✅", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    elif data == "opt_2" or data.startswith("grp_page_") or data.startswith("grp_tog_") or data == "grp_select_all" or data == "grp_deselect_all" or data == "grp_done":
+        groups = get_user_groups(user_id)
+        total_groups = len(groups)
+        
+        page = 0
+        if data.startswith("grp_page_"):
+            page = int(data.split("_")[2])
+        elif data.startswith("grp_tog_"):
+            parts = data.split("_")
+            g_id = parts[2]
+            page = int(parts[3])
+            toggle_group_selection(user_id, g_id)
+            groups = get_user_groups(user_id)
+        elif data == "grp_select_all":
+            set_all_groups_selection(user_id, 1)
+            groups = get_user_groups(user_id)
+        elif data == "grp_deselect_all":
+            set_all_groups_selection(user_id, 0)
+            groups = get_user_groups(user_id)
+        elif data == "grp_done":
+            await query.edit_message_text("✅ **Selected groups successfully saved for auto-forwarding!**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]), parse_mode="Markdown")
+            return
+
+        per_page = 10
+        start_idx = page * per_page
+        end_idx = min(start_idx + per_page, total_groups)
+        current_groups = groups[start_idx:end_idx]
+
+        keyboard = []
+        for g_id, g_name, is_sel in current_groups:
+            icon = "✅" if is_sel == 1 else "☑️"
+            keyboard.append([InlineKeyboardButton(f"{icon} {g_name}", callback_data=f"grp_tog_{g_id}_{page}")])
+
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"grp_page_{page-1}"))
+        if end_idx < total_groups:
+            nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"grp_page_{page+1}"))
+        if nav_buttons:
+            keyboard.append(nav_buttons)
+
+        keyboard.append([
+            InlineKeyboardButton("Select All", callback_data="grp_select_all"),
+            InlineKeyboardButton("Deselect All", callback_data="grp_deselect_all")
+        ])
+        keyboard.append([InlineKeyboardButton("✅ Done", callback_data="grp_done")])
+        keyboard.append([InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")])
+
+        text = f"👥 **Select Target Groups**\n\nShowing {start_idx + 1}-{end_idx} of {total_groups}\n\nTap groups to select/deselect:"
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif data == "opt_3":
         config = get_bot_config(user_id)
-        current_time = config[2] if config else 30
+        current_time = config[1] if config else 30
         keyboard = [
             [InlineKeyboardButton("20s", callback_data="time_20"), InlineKeyboardButton("30s", callback_data="time_30"), InlineKeyboardButton("60s", callback_data="time_60")],
             [InlineKeyboardButton("120s", callback_data="time_120"), InlineKeyboardButton("300s", callback_data="time_300")],
@@ -164,7 +203,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "status":
         config = get_bot_config(user_id)
         chan = config[0] if config and config[0] else "Not Set"
-        t_int = config[2] if config else 30
+        t_int = config[1] if config else 30
         status_text = f"📊 **Bot Status Dashboard**\n\n• Source Channel: {chan}\n• Time Interval Selected: {t_int}s\n• Premium Status: {'Active 💎' if is_premium(user_id) else 'Free Plan ❌'}"
         await query.edit_message_text(status_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]), parse_mode="Markdown")
 
@@ -199,4 +238,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-     
