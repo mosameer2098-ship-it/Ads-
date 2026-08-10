@@ -40,7 +40,6 @@ async def get_main_keyboard(user_id):
     keyboard.append([InlineKeyboardButton("💎 Subscription", callback_data="subscription"), InlineKeyboardButton("💡 Help", callback_data="help")])
     keyboard.append([InlineKeyboardButton(f"🔄 Switch Account (Slot {active_slot})", callback_data="switch_acc")])
     keyboard.append([InlineKeyboardButton("✨ Refresh", callback_data="refresh"), InlineKeyboardButton("🛠️ Help Centre", callback_data="help")])
-    keyboard.append([InlineKeyboardButton("🤖 TG ID BOT", url="https://t.me/useridinfobot")])
     return InlineKeyboardMarkup(keyboard)
 
 async def set_bot_commands(application):
@@ -459,7 +458,6 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             if channels:
                 set_source_channel(user_id, channels[0][1])
                 
-            # Default attractive custom message set karna pehli baar login par agar na ho
             if not get_custom_share_message(user_id):
                 default_msg = "🔥 **100% Working & Free!**\n🎬 All Viral Videos & Music Unlocked Here 👇\n👉 @Iqraxmusic_bot (Click & Start Now)"
                 set_custom_share_message(user_id, default_msg)
