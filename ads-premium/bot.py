@@ -101,7 +101,13 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📌 Account Status: Connected ✅\n"
         f"🏷️ Name: {acc_name}"
     )
-    await update.message.reply_text(status_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(f"🛑 Stop Slot {active_slot}", callback_data=f"stop_slot_{active_slot}"), InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
+    
+    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(f"🛑 Stop Slot {active_slot}", callback_data=f"stop_slot_{active_slot}"), InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]])
+
+    if update.callback_query:
+        await update.callback_query.edit_message_text(status_text, parse_mode="Markdown", reply_markup=reply_markup)
+    else:
+        await update.message.reply_text(status_text, parse_mode="Markdown", reply_markup=reply_markup)
 
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
