@@ -61,6 +61,13 @@ def init_db():
             active_slot INTEGER DEFAULT 1
         )
     """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS custom_messages (
+            user_id INTEGER PRIMARY KEY,
+            share_message TEXT
+        )
+    """)
     
     conn.commit()
     conn.close()
@@ -257,3 +264,18 @@ def set_active_slot(user_id, slot_number):
     cursor.execute("INSERT OR REPLACE INTO active_slots (user_id, active_slot) VALUES (?, ?)", (user_id, slot_number))
     conn.commit()
     conn.close()
+
+def set_custom_share_message(user_id, message):
+    conn = sqlite3.connect("bot_database.db", check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO custom_messages (user_id, share_message) VALUES (?, ?)", (user_id, message))
+    conn.commit()
+    conn.close()
+
+def get_custom_share_message(user_id):
+    conn = sqlite3.connect("bot_database.db", check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("SELECT share_message FROM custom_messages WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else "🔥 **100% Working & Free!**\n🎬 All Viral Videos & Music Unlocked Here 👇\n👉 @Iqraxmusic_bot (Click & Start Now)"
