@@ -428,10 +428,11 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("menu", start))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message_input))
     
-    print("Bot is running with strict creator channel filter...")
+    print("Bot is running with start/menu commands and strict creator channel filter...")
     app.run_polling()
 
 if __name__ == "__main__":
