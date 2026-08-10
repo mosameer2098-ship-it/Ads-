@@ -87,7 +87,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         try:
                             await context.bot.send_message(
                                 chat_id=user.id, 
-                                text="🎁 **Badhai ho!** Referral link se join karne par aapko **2 din ka Free Trial** mil gaya hai!"
+                                text="🎁 **Badhai ho!** Referral link se join karne par aapko **2 din ka Free Trial** mil gaya hai ab aap bot ko test kar sakte hain!"
                             )
                         except Exception:
                             pass
@@ -312,17 +312,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(sub_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
-    # Referral Info & Direct Share Button
+    # Updated Referral Info & Clear Share Message
     if data == "referral_info":
         ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
-        share_text = f"🚀 AdsNova Pro Bot ko use karo aur automatic ad forwarding ka anand lo! Yahan click karke start karein: {ref_link}"
+        # Ab share karne par message ke andar clearly likha hoga ki 2 din ka free trial milega
+        share_text = f"🎁 Is link se AdsNova Pro Bot ko start karo aur 2 din bilkul free mein bot test karo! 👇\n{ref_link}"
         share_url = f"https://t.me/share/url?url={ref_link}&text={share_text}"
         
         ref_msg = (
-            "🎁 **Free Trial Referral System** 🎁\n\n"
+            "🎁 **Free Trial & Referral System** 🎁\n\n"
             "Aap apna yeh unique referral link doston ke sath share karein:\n"
             f"`{ref_link}`\n\n"
-            "💡 **Rule:** 2 din is bot ko test kar sakte ho, ager pasand aaye to subscription buy kro!"
+            "💡 **Note:** Jo bhi is link se bot start karega, use **2 din is bot ko test karne ke liye free trial** milega. Agar pasand aaye toh subscription buy kar sakta hai!"
         )
         keyboard = [
             [InlineKeyboardButton("🚀 Share Link Now", url=share_url)],
@@ -406,7 +407,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "logout_acc":
         active_slot = get_active_slot(user_id)
         remove_user_session(user_id, active_slot)
-        await query.edit_message_text(f"🚪 Slot {active_slot} Logged Out!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
+        await query.edit_message_text(f"🚪 Slot {slot_num} Logged Out!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
 
     elif data == "settings":
         keyboard = [
