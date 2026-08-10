@@ -21,6 +21,7 @@ API_ID = 32222378
 API_HASH = "35fa506b69e293835d37158ea97557cf"
 
 ADMIN_ID = 8132623749
+BOT_USERNAME = "Automatic_posttbot"
 
 user_login_state = {}
 forwarded_counts = {}
@@ -44,7 +45,7 @@ async def get_main_keyboard(user_id):
 
 async def set_bot_commands(application):
     user_commands = [
-        BotCommand("start", "Start the bot 🚀"),
+        BotCommand("start", "Start AdsNova Pro Bot 🚀"),
         BotCommand("menu", "Open main menu 📋"),
         BotCommand("status", "Check posting status 📊"),
         BotCommand("stop", "Stop ad posting ⏹️"),
@@ -57,10 +58,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_user(user)
     
     welcome_text = (
-        "🌹 **Auto Forwarding Ads Bot - Main Menu** 🌹\n\n"
-        "✨ Premium Service - Fast & Reliable\n"
+        "💎 **AdsNova Pro Bot - Main Menu** 💎\n\n"
+        "✨ Premium Automation Service - Fast & Reliable\n"
         "⚡ Random Intervals for natural posting\n"
-        "🛡️ Your profile stays unchanged\n\n"
+        "🛡️ Your profile stays clean & unchanged\n\n"
         "👇 Choose an option below:"
     )
     kb = await get_main_keyboard(user.id)
@@ -90,7 +91,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_count = forwarded_counts.get(user_id, 0)
 
     status_text = (
-        "📊 **Your Account & Posting Status**\n\n"
+        "📊 **AdsNova Pro - Status Dashboard**\n\n"
         f"🆔 User ID: `{user_id}`\n"
         f"📂 Active Account Slot: Slot {active_slot}\n"
         f"🔐 Login Status: {login_status}\n"
@@ -129,7 +130,13 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id != ADMIN_ID:
         await update.message.reply_text("❌ Aap is command ko use nahi kar sakte!")
         return
-    await update.message.reply_text("👑 **Admin Panel:**\n- `/addsub <user_id>` (30 Days)\n- `/delsub <user_id>`", parse_mode="Markdown")
+    await update.message.reply_text(
+        "👑 **Admin Panel:**\n"
+        "- `/addsub <user_id>` (30 Days)\n"
+        "- `/delsub <user_id>`\n"
+        "- `/broadcast <message>` (Send message with start button)", 
+        parse_mode="Markdown"
+    )
 
 async def addsub_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -160,6 +167,47 @@ async def delsub_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ User `{target_user_id}` ki subscription hata di gayi hai.", parse_mode="Markdown")
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {e}")
+
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Aap Admin nahi hain!")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("❌ Broadcast karne ke liye message likhein.\nUsage: `/broadcast <aapka message>`", parse_mode="Markdown")
+        return
+        
+    broadcast_msg = " ".join(context.args)
+    bot_link = f"https://t.me/{BOT_USERNAME}"
+    
+    keyboard = [[InlineKeyboardButton("🚀 Start AdsNova Pro", url=bot_link)]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    import sqlite3
+    conn = sqlite3.connect("bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM users")
+    users = cursor.fetchall()
+    conn.close()
+    
+    msg_sent = 0
+    await update.message.reply_text(f"🚀 Broadcast shuru ho raha hai... (Total Users: {len(users)})")
+    
+    for user in users:
+        try:
+            await context.bot.send_message(
+                chat_id=user[0], 
+                text=broadcast_msg, 
+                parse_mode="Markdown", 
+                reply_markup=reply_markup
+            )
+            msg_sent += 1
+            await asyncio.sleep(0.1) 
+        except Exception:
+            continue
+            
+    await update.message.reply_text(f"✅ Broadcast complete! Total {msg_sent} users ko button ke sath message bhej diya gaya hai.")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -250,7 +298,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("💬 4 Auto-Reply Share Message", callback_data="opt_4")],
             [InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]
         ]
-        await query.edit_message_text("⚙️ **Settings Menu**\n\nAap apni zaroorat ke mutabiq option chun sakte hain:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text("⚙️ **AdsNova Settings Menu**\n\nAap apni zaroorat ke mutabiq option chun sakte hain:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "opt_1" or data.startswith("set_chan_sel_"):
         channels = get_user_channels(user_id)
@@ -351,7 +399,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"✅ Time Interval Successfully Set to {t_val}s!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
 
     elif data == "opt_4":
-        # Yahan Admin check lagaya gaya hai taaki sirf Admin hi edit kar sake
         if user_id != ADMIN_ID:
             await query.edit_message_text(
                 "❌ **Access Denied!**\n\nYeh custom message sirf Bot ka Admin hi change kar sakta hai.",
@@ -378,19 +425,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             expiry = get_user_expiry(user_id)
             rem_days = get_remaining_days(user_id)
             sub_text = (
-                "💎 **Your Premium Subscription**\n\n"
+                "💎 **AdsNova Pro Subscription**\n\n"
                 "✨ Status: Active ✅\n"
                 f"⏳ Days Remaining: {rem_days} Days\n"
                 f"📅 Expiry Date: {expiry}\n\n"
                 "🎉 Aapke paas sabhi features unlocked hain!"
             )
         else:
-            sub_text = "💎 **Premium Subscription**\n\nUnlock unlimited features!\nTo buy subscription, contact admin here: @AdsNova0"
+            sub_text = "💎 **AdsNova Pro Subscription**\n\nUnlock unlimited features!\nTo buy subscription, contact admin here: @AdsNova0"
         
         await query.edit_message_text(sub_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
 
     elif data == "help":
-        await query.edit_message_text("💡 **Help & Guide**\n\nAapko support @AdsNova0 par milegi.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
+        await query.edit_message_text("💡 **Help & Support**\n\nAapko support @AdsNova0 par milegi.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
 
     elif data == "refresh":
         await start(update, context)
@@ -545,7 +592,7 @@ async def handle_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text(f"❌ Password Incorrect: {e}\n\nDobara koshish karne ke liye /start dabayein.")
 
 async def background_forwarder():
-    """Background task jo automatic channel detect karke private/public dono se messages copy karke bheja (Channel hide rakhega)."""
+    """Background task jo channel se message copy karke bhejega taaki 'Forwarded from' tag hide rahe."""
     while True:
         try:
             import sqlite3
@@ -591,7 +638,6 @@ async def background_forwarder():
                                     try:
                                         target_id = int(g_id) if g_id.lstrip('-').isdigit() else g_id
                                         
-                                        # Forwarding ki jagah send_message copy use kiya hai taaki channel ka name/tag hide rahe
                                         await client.send_message(target_id, message)
                                         
                                         forwarded_counts[user_id] = forwarded_counts.get(user_id, 0) + 1
@@ -625,6 +671,7 @@ def main():
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("addsub", addsub_command))
     app.add_handler(CommandHandler("delsub", delsub_command))
+    app.add_handler(CommandHandler("broadcast", broadcast_command))
     
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message_input))
@@ -635,7 +682,7 @@ def main():
         
     app.post_init = post_init
     
-    print("Bot is running with auto-forwarding engine...")
+    print("AdsNova Pro Bot is running successfully...")
     app.run_polling()
 
 if __name__ == "__main__":
