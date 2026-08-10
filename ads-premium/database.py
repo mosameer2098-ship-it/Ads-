@@ -1,13 +1,13 @@
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
 
 def init_db():
     conn = sqlite3.connect("bot_database.db", check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT, is_premium INTEGER DEFAULT 0, expiry_date TEXT)")
-    # user_id aur phone combination primary key banaya hai taaki ek user multiple IDs login kar sake
-    cursor.execute("CREATE TABLE IF NOT EXISTS user_sessions (user_id INTEGER, phone TEXT, session_string TEXT, account_name TEXT, PRIMARY KEY (user_id, phone))")
-    cursor.execute("CREATE TABLE IF NOT EXISTS bot_config (user_id INTEGER PRIMARY KEY, source_channel TEXT, time_interval INTEGER DEFAULT 30)")
+    # 1 se 20 slots ke liye slot_number add kiya hai
+    cursor.execute("CREATE TABLE IF NOT EXISTS user_sessions (user_id INTEGER, slot_number INTEGER, phone TEXT, session_string TEXT, account_name TEXT, is_active INTEGER DEFAULT 0, is_stopped INTEGER DEFAULT 0, PRIMARY KEY (user_id, slot_number))")
+    cursor.execute("CREATE TABLE IF NOT EXISTS bot_config (user_id INTEGER PRIMARY KEY, source_channel TEXT, time_interval INTEGER DEFAULT 30, active_slot INTEGER DEFAULT 1)")
     cursor.execute("CREATE TABLE IF NOT EXISTS user_groups (user_id INTEGER, group_id TEXT, group_name TEXT, is_selected INTEGER DEFAULT 0)")
     cursor.execute("CREATE TABLE IF NOT EXISTS user_channels (user_id INTEGER, channel_id TEXT, channel_name TEXT)")
     conn.commit()
@@ -35,7 +35,6 @@ def is_premium(user_id):
             try:
                 exp_date = datetime.strptime(exp_str, "%d-%m-%Y")
                 if datetime.now() > exp_date:
-                    remove_subscription_by_id(user_id)
                     return False
             except:
                 pass
@@ -66,21 +65,59 @@ def get_remaining_days(user_id):
             pass
     return 30
 
-def save_user_session(user_id, phone, session_string, account_name):
+def save_user_session(user_id, slot_number, phone, session_string, account_name):
     conn = sqlite3.connect("bot_database.db", check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO user_sessions (user_id, phone, session_string, account_name) VALUES (?, ?, ?, ?)", 
-                   (user_id, phone, session_string, account_name))
+    cursor.execute("INSERT OR REPLACE INTO user_sessions (user_id, slot_number, phone, session_string, account_name, is_stopped) VALUES (?, ?, ?, ?, ?, 0)", 
+                   (user_id, slot_number, phone, session_string, account_name))
     conn.commit()
     conn.close()
 
 def get_user_sessions(user_id):
     conn = sqlite3.connect("bot_database.db", check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute("SELECT phone, account_name FROM user_sessions WHERE user_id = ?", (user_id,))
+    cursor.execute("SELECT slot_number, phone, account_name, is_stopped FROM user_sessions WHERE user_id = ?", (user_id,))
     rows = cursor.fetchall()
     conn.close()
     return rows
+
+def get_slot_session(user_id, slot_number):
+    conn = sqlite3.connect("bot_database.db", check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("SELECT phone, session_string, account_name, is_stopped FROM user_sessions WHERE user_id = ? AND slot_number = ?", (user_id, slot_number))
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+def remove_user_session(user_id, slot_number):
+    conn = sqlite3.connect("bot_database.db", check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM user_sessions WHERE user_id = ? AND slot_number = ?", (user_id, slot_number))
+    conn.commit()
+    conn.close()
+
+def set_slot_stopped(user_id, slot_number, status):
+    conn = sqlite3.connect("bot_database.db", check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE user_sessions SET is_stopped = ? WHERE user_id = ? AND slot_number = ?", (status, user_id, slot_number))
+    conn.commit()
+    conn.close()
+
+def get_active_slot(user_id):
+    conn = sqlite3.connect("bot_database.db", check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("SELECT active_slot FROM bot_config WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row and row[0] else 1
+
+def set_active_slot(user_id, slot_number):
+    conn = sqlite3.connect("bot_database.db", check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO bot_config (user_id, source_channel, time_interval, active_slot) VALUES (?, COALESCE((SELECT source_channel FROM bot_config WHERE user_id = ?), 'Not Set'), COALESCE((SELECT time_interval FROM bot_config WHERE user_id = ?), 30), ?)", 
+                   (user_id, user_id, user_id, slot_number))
+    conn.commit()
+    conn.close()
 
 def save_real_groups_and_channels(user_id, groups, channels):
     conn = sqlite3.connect("bot_database.db", check_same_thread=False)
@@ -108,14 +145,14 @@ def get_bot_config(user_id):
 def set_source_channel(user_id, channel):
     conn = sqlite3.connect("bot_database.db", check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO bot_config (user_id, source_channel, time_interval) VALUES (?, ?, COALESCE((SELECT time_interval FROM bot_config WHERE user_id = ?), 30))", (user_id, channel, user_id))
+    cursor.execute("INSERT OR REPLACE INTO bot_config (user_id, source_channel, time_interval, active_slot) VALUES (?, ?, COALESCE((SELECT time_interval FROM bot_config WHERE user_id = ?), 30), COALESCE((SELECT active_slot FROM bot_config WHERE user_id = ?), 1))", (user_id, channel, user_id, user_id))
     conn.commit()
     conn.close()
 
 def set_time_interval(user_id, interval):
     conn = sqlite3.connect("bot_database.db", check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO bot_config (user_id, source_channel, time_interval) VALUES (?, COALESCE((SELECT source_channel FROM bot_config WHERE user_id = ?), 'Not Set'), ?)", (user_id, user_id, interval))
+    cursor.execute("INSERT OR REPLACE INTO bot_config (user_id, source_channel, time_interval, active_slot) VALUES (?, COALESCE((SELECT source_channel FROM bot_config WHERE user_id = ?), 'Not Set'), ?, COALESCE((SELECT active_slot FROM bot_config WHERE user_id = ?), 1))", (user_id, user_id, interval, user_id))
     conn.commit()
     conn.close()
 
