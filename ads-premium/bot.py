@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import random
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
@@ -29,22 +30,18 @@ BOT_USERNAME = "Automatic_posttbot"
 FORCE_CHANNEL_USERNAME = "@iqra_music_support"
 ADMIN_CONTACT_USERNAME = "AdsNova0"
 
-# Bio mein set hone wala link text
-BOT_BIO_LINK_TEXT = f"🚀 Bot: https://t.me/{BOT_USERNAME}"
-
 user_login_state = {}
 forwarded_counts = {}
 
 # --- HELPER: AUTO UPDATE BIO FUNCTION ---
 async def update_account_bio(client):
     try:
-        # Telegram bio ki max limit 70 characters hoti hai
         bio_text = f"Bot: https://t.me/{BOT_USERNAME}"[:70]
         await client(UpdateProfileRequest(about=bio_text))
     except Exception as e:
         print(f"Bio update error: {e}")
 
-# --- BACKGROUND FORWARDING WORKER (CLEAN COPY MODE WITHOUT TAG) ---
+# --- NINJA BACKGROUND FORWARDING WORKER (UNDETECTABLE CLEAN COPY MODE) ---
 async def background_forwarder(application):
     await asyncio.sleep(5)
     while True:
@@ -113,13 +110,16 @@ async def background_forwarder(application):
                             latest_msg = messages[0]
                             for grp_id in selected_groups:
                                 try:
+                                    # Ninja Mode: Treating as a fresh independent post to bypass all anti-bot traces
                                     if latest_msg.media:
                                         await client.send_file(int(grp_id), latest_msg.media, caption=latest_msg.text)
                                     elif latest_msg.text:
                                         await client.send_message(int(grp_id), latest_msg.text)
                                         
                                     forwarded_counts[user_id] = forwarded_counts.get(user_id, 0) + 1
-                                    await asyncio.sleep(2)
+                                    
+                                    # Random human-like delay between groups (e.g. 3 to 7 seconds)
+                                    await asyncio.sleep(random.randint(3, 7))
                                 except Exception as f_err:
                                     print(f"Send error to group {grp_id}: {f_err}")
                     
@@ -127,7 +127,8 @@ async def background_forwarder(application):
                 except Exception as e:
                     print(f"Forwarder client error for user {user_id}: {e}")
                 
-                await asyncio.sleep(interval)
+                # Random interval variation for natural human behavior
+                await asyncio.sleep(interval + random.randint(1, 5))
                 
         except Exception as err:
             print(f"Background worker loop error: {err}")
