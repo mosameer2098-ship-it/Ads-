@@ -31,7 +31,7 @@ ADMIN_CONTACT_USERNAME = "AdsNova0"
 
 user_login_state = {}
 forwarded_counts = {}
-user_languages = {} # User language storage ('en' or 'hi')
+user_languages = {}
 
 async def update_account_bio(client):
     try:
@@ -40,7 +40,6 @@ async def update_account_bio(client):
     except Exception as e:
         print(f"Bio update error: {e}")
 
-# --- BACKGROUND EXPIRY REMINDER WORKER ---
 async def expiry_reminder_worker(application):
     await asyncio.sleep(10)
     while True:
@@ -50,7 +49,6 @@ async def expiry_reminder_worker(application):
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             
-            # Check users whose subscription expires in ~24 hours
             tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
             cursor.execute("SELECT user_id, expiry_date FROM subscriptions WHERE expiry_date LIKE ?", (f"{tomorrow}%",))
             expiring_users = cursor.fetchall()
@@ -68,13 +66,11 @@ async def expiry_reminder_worker(application):
                 except Exception:
                     pass
             
-            # Run check once every 12 hours
             await asyncio.sleep(43200)
         except Exception as e:
             print(f"Expiry reminder worker error: {e}")
             await asyncio.sleep(3600)
 
-# --- NINJA BACKGROUND FORWARDING WORKER ---
 async def background_forwarder(application):
     await asyncio.sleep(5)
     while True:
@@ -211,22 +207,23 @@ async def get_main_keyboard(user_id):
     keyboard = []
     if slot_info:
         if is_stopped:
-            btn_text = f"🟢 Start Slot {active_slot}" if lang == 'en' else f"🟢 Slot {active_Slot} Shuru Karein"
+            btn_text = f"🟢 Start Slot {active_slot}" if lang == 'en' else f"🟢 Slot {active_slot} Shuru Karein"
             keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"start_slot_{active_slot}"), InlineKeyboardButton("🚪 Logout", callback_data="logout_acc")])
         else:
-            btn_text = f"🛑 Stop Slot {active_slot}" if lang == 'en' else f"🛑 Slot {active_Slot} Rokein"
+            btn_text = f"🛑 Stop Slot {active_slot}" if lang == 'en' else f"🛑 Slot {active_slot} Rokein"
             keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"stop_slot_{active_slot}"), InlineKeyboardButton("🚪 Logout", callback_data="logout_acc")])
     else:
-        btn_text = f"🔑 Login Slot {active_slot}" if lang == 'en' else f"🔑 Slot {active_Slot} Login Karein"
+        btn_text = f"🔑 Login Slot {active_slot}" if lang == 'en' else f"🔑 Slot {active_slot} Login Karein"
         keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"slot_click_{active_slot}")])
         
-    status_txt = "📊 Status" if lang == 'en' else "📊 Status"
-    settings_txt = "⚙️ Settings" if lang == 'en' else "⚙️ Settings"
-    sub_txt = "💎 Subscription" if lang == 'en' else "💎 Subscription"
-    trial_txt = "🎁 Free Trial" if lang == 'en' else "🎁 Free Trial (Referral)"
+    status_txt = "📊 Status"
+    settings_txt = "⚙️ Settings"
+    sub_txt = "💎 Subscription Details"
+    trial_txt = "🎁 Free Trial (Referral)"
     
     keyboard.append([InlineKeyboardButton(status_txt, callback_data="status"), InlineKeyboardButton(settings_txt, callback_data="settings")])
-    keyboard.append([InlineKeyboardButton(sub_txt, callback_data="subscription"), InlineKeyboardButton(trial_txt, callback_data="referral_info")])
+    keyboard.append([InlineKeyboardButton(sub_txt, callback_data="subscription")])
+    keyboard.append([InlineKeyboardButton(trial_txt, callback_data="referral_info")])
     keyboard.append([InlineKeyboardButton(f"🌐 Language: {'English' if lang=='en' else 'Hinglish'}", callback_data="toggle_lang")])
     keyboard.append([InlineKeyboardButton("✨ Refresh", callback_data="refresh"), InlineKeyboardButton("🛠️ Help Centre", callback_data="help_centre")])
     return InlineKeyboardMarkup(keyboard)
@@ -459,7 +456,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await client.connect()
             sent = await client.send_code_request(text)
             state["phone_code_hash"] = sent.phone_code_hash
-            await update.message.reply_text("📩 OTP code aapke Telegram account par bhej diya gaya hai. Kripya OTP yahan enter karein:")
+            await update.message.reply_text("📩 OTP code aapke Telegram account par bhej diya gaya hai:")
         except Exception as e:
             user_login_state.pop(user_id, None)
             await update.message.reply_text(f"❌ Error sending OTP: {e}")
@@ -589,23 +586,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "subscription":
         if user_id == ADMIN_ID:
-            sub_text = "💎 **Subscription Status & Details** 💎\n\n🌟 Your Subscription: Active ✅\n🏷️ Type: `Lifetime (Admin) ♾️`\n⏳ Expiry Date: `Unlimited`"
+            sub_text = "💎 **Subscription Details** 💎\n\n🌟 Status: Active ✅\n🏷️ Type: `Lifetime (Admin) ♾️`\n⏳ Expiry: `Unlimited`"
         elif is_premium(user_id):
             expiry_str = get_user_expiry(user_id)
             remaining = get_remaining_days(user_id)
             sub_type_label = get_subscription_type_label(user_id)
             sub_text = (
-                "💎 **Subscription Status & Details** 💎\n\n"
-                f"🌟 Your Subscription: Active ✅\n"
+                "💎 **Subscription Details** 💎\n\n"
+                f"🌟 Status: Active ✅\n"
                 f"🏷️ Type: `{sub_type_label}`\n"
                 f"⏳ Expiry Date: `{expiry_str}`\n"
                 f"⏱️ Remaining Time: `{remaining}`"
             )
         else:
             sub_text = (
-                "💎 **Subscription Status & Details** 💎\n\n"
-                "🌟 Your Subscription: Inactive ❌\n\n"
-                "Plan buy karne ke liye Admin ko message karein:"
+                "💎 **Subscription Details** 💎\n\n"
+                "🌟 Status: Inactive ❌\n\n"
+                "Plan buy karne ke liye niche button par click karke Admin ko message karein:"
             )
         
         keyboard = []
@@ -857,7 +854,7 @@ def main():
         
     application.post_init = post_init
 
-    print("AdsNova Pro Bot is running successfully with all advanced features...")
+    print("AdsNova Pro Final Bot is running successfully...")
     application.run_polling()
 
 if __name__ == "__main__":
