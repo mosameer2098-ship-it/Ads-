@@ -10,7 +10,7 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Users table (Added referral_claimed column for 2 days free trial rule)
+    # Users table (with referral_claimed column)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -102,7 +102,6 @@ def save_user(user):
     conn.commit()
     conn.close()
 
-# --- REFERRAL SYSTEM DATABASE FUNCTIONS ---
 def check_referral_eligibility(user_id):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -116,10 +115,8 @@ def check_referral_eligibility(user_id):
 def claim_referral_reward(user_id):
     conn = get_db_connection()
     cursor = conn.cursor()
-    # Mark referral as claimed so user cannot claim it again
     cursor.execute("UPDATE users SET referral_claimed = 1 WHERE user_id = ?", (user_id,))
     
-    # Add 2 days subscription trial
     expiry_time = datetime.now() + timedelta(days=2)
     expiry_str = expiry_time.strftime("%Y-%m-%d %H:%M:%S")
     
@@ -195,7 +192,6 @@ def get_remaining_days(user_id):
 def add_premium_subscription(user_id, days=30):
     conn = get_db_connection()
     cursor = conn.cursor()
-    
     current_expiry = get_user_expiry(user_id)
     now = datetime.now()
     
@@ -212,11 +208,7 @@ def add_premium_subscription(user_id, days=30):
         new_expiry = now + timedelta(days=days)
         
     expiry_str = new_expiry.strftime('%Y-%m-%d %H:%M:%S')
-    
-    cursor.execute("""
-        INSERT OR REPLACE INTO subscriptions (user_id, expiry_date)
-        VALUES (?, ?)
-    """, (user_id, expiry_str))
+    cursor.execute("INSERT OR REPLACE INTO subscriptions (user_id, expiry_date) VALUES (?, ?)", (user_id, expiry_str))
     conn.commit()
     conn.close()
 
@@ -312,10 +304,7 @@ def get_active_slot(user_id):
 def set_active_slot(user_id, slot_number):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        INSERT OR REPLACE INTO active_slots (user_id, active_slot)
-        VALUES (?, ?)
-    """, (user_id, slot_number))
+    cursor.execute("INSERT OR REPLACE INTO active_slots (user_id, active_slot) VALUES (?, ?)", (user_id, slot_number))
     conn.commit()
     conn.close()
 
@@ -324,17 +313,11 @@ def save_real_groups_and_channels(user_id, groups, channels):
     cursor = conn.cursor()
     cursor.execute("DELETE FROM user_groups WHERE user_id = ?", (user_id,))
     for g_id, g_name in groups:
-        cursor.execute("""
-            INSERT OR REPLACE INTO user_groups (user_id, group_id, group_name, is_selected)
-            VALUES (?, ?, ?, 0)
-        """, (user_id, str(g_id), g_name))
+        cursor.execute("INSERT OR REPLACE INTO user_groups (user_id, group_id, group_name, is_selected) VALUES (?, ?, ?, 0)", (user_id, str(g_id), g_name))
         
     cursor.execute("DELETE FROM user_channels WHERE user_id = ?", (user_id,))
     for c_id, c_name in channels:
-        cursor.execute("""
-            INSERT OR REPLACE INTO user_channels (user_id, channel_id, channel_name)
-            VALUES (?, ?, ?)
-        """, (user_id, str(c_id), c_name))
+        cursor.execute("INSERT OR REPLACE INTO user_channels (user_id, channel_id, channel_name) VALUES (?, ?, ?)", (user_id, str(c_id), c_name))
     conn.commit()
     conn.close()
 
@@ -349,11 +332,7 @@ def get_user_groups(user_id):
 def toggle_group_selection(user_id, group_id):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        UPDATE user_groups 
-        SET is_selected = CASE WHEN is_selected = 1 THEN 0 ELSE 1 END 
-        WHERE user_id = ? AND group_id = ?
-    """, (user_id, group_id))
+    cursor.execute("UPDATE user_groups SET is_selected = CASE WHEN is_selected = 1 THEN 0 ELSE 1 END WHERE user_id = ? AND group_id = ?", (user_id, group_id))
     conn.commit()
     conn.close()
 
