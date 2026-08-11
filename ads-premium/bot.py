@@ -31,6 +31,7 @@ ADMIN_CONTACT_USERNAME = "AdsNova0"
 
 user_login_state = {}
 forwarded_counts = {}
+failed_counts = {}
 user_languages = {}
 
 async def update_account_bio(client):
@@ -147,6 +148,7 @@ async def background_forwarder(application):
                                     forwarded_counts[user_id] = forwarded_counts.get(user_id, 0) + 1
                                     await asyncio.sleep(random.randint(3, 7))
                                 except Exception as f_err:
+                                    failed_counts[user_id] = failed_counts.get(user_id, 0) + 1
                                     print(f"Send error to group {grp_id}: {f_err}")
                     
                     await client.disconnect()
@@ -216,7 +218,7 @@ async def get_main_keyboard(user_id):
         btn_text = f"🔑 Login Slot {active_slot}" if lang == 'en' else f"🔑 Slot {active_slot} Login Karein"
         keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"slot_click_{active_slot}")])
         
-    status_txt = "📊 Status"
+    status_txt = "📊 Live Analytics Status"
     settings_txt = "⚙️ Settings"
     sub_txt = "💎 Subscription Details"
     trial_txt = "🎁 Free Trial (Referral)"
@@ -354,10 +356,12 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sub_type_label = get_subscription_type_label(user_id)
     groups = get_user_groups(user_id)
     sel_groups = sum(1 for g in groups if g[2] == 1)
-    msg_count = forwarded_counts.get(user_id, 0)
+    
+    success_count = forwarded_counts.get(user_id, 0)
+    failed_count = failed_counts.get(user_id, 0)
 
     status_text = (
-        "📊 **AdsNova Pro - Status Dashboard**\n\n"
+        "📊 **AdsNova Pro - Live Analytics Dashboard**\n\n"
         f"🆔 User ID: `{user_id}`\n"
         f"📂 Active Account Slot: Slot {active_slot}\n"
         f"🔐 Login Status: {login_status}\n"
@@ -366,7 +370,9 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📢 Source Channel: {chan}\n"
         f"👥 Target Groups: {sel_groups} groups selected\n"
         f"⏱️ Posting Interval: {t_int} seconds\n\n"
-        f"📨 Messages Forwarded: {msg_count}\n\n"
+        f"📈 **Live Performance Analytics:**\n"
+        f"  • Successfully Sent: `⚡ {success_count}` messages\n"
+        f"  • Errors/Failed: `⚠️ {failed_count}` messages\n\n"
         f"👤 **Logged-in Account Details**\n"
         f"📌 Account Status: Connected ✅\n"
         f"🏷️ Name: {acc_name}"
@@ -854,7 +860,7 @@ def main():
         
     application.post_init = post_init
 
-    print("AdsNova Pro Final Bot is running successfully...")
+    print("AdsNova Pro Final Analytics Bot is running successfully...")
     application.run_polling()
 
 if __name__ == "__main__":
