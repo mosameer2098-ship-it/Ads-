@@ -30,7 +30,7 @@ ADMIN_CONTACT_USERNAME = "AdsNova0"
 user_login_state = {}
 forwarded_counts = {}
 
-# --- BACKGROUND FORWARDING WORKER (OPTIMIZED & FLOOD-WAIT FREE) ---
+# --- BACKGROUND FORWARDING WORKER (PUBLIC & PRIVATE CHANNELS SUPPORT) ---
 async def background_forwarder(application):
     await asyncio.sleep(5)
     while True:
@@ -73,14 +73,12 @@ async def background_forwarder(application):
                         await client.disconnect()
                         continue
                     
+                    # Search source channel entity by matching name or ID across all dialogs (supports both public & private)
                     source_entity = None
-                    try:
-                        source_entity = await client.get_entity(source_chan)
-                    except Exception:
-                        async for dialog in client.iter_dialogs(limit=30):
-                            if dialog.title.strip().lower() == source_chan.strip().lower():
-                                source_entity = dialog.entity
-                                break
+                    async for dialog in client.iter_dialogs(limit=200):
+                        if dialog.title.strip().lower() == source_chan.strip().lower() or str(dialog.id) == str(source_chan):
+                            source_entity = dialog.entity
+                            break
                     
                     if source_entity:
                         messages = await client.get_messages(source_entity, limit=1)
@@ -634,7 +632,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await client.connect()
             if await client.is_user_authorized():
-                dialogs = await client.get_dialogs(limit=50)
+                dialogs = await client.get_dialogs(limit=None)
                 groups = []
                 channels = []
                 for d in dialogs:
