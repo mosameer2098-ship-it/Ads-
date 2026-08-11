@@ -1,1 +1,17 @@
+{
+  "name": "AdsNova Bot",
+  "description": "Telegram Auto Forwarder",
+  "scripts": {},
+  "env": {
+    "BOT_TOKEN": {
+      "description": "Telegram Bot Token",
+      "required": true
+    }
+  },
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    }
+  ]
+}
 
