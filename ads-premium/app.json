@@ -1,1 +1,24 @@
+{
+  "name": "AdsNova Bot",
+  "description": "Telegram bot with Razorpay payment integration",
+  "env": {
+    "TELEGRAM_BOT_TOKEN": {
+      "description": "Enter your Telegram Bot Token from BotFather",
+      "required": true
+    },
+    "RAZORPAY_KEY_ID": {
+      "description": "Enter your Razorpay Key ID",
+      "required": true
+    },
+    "RAZORPAY_KEY_SECRET": {
+      "description": "Enter your Razorpay Key Secret",
+      "required": true
+    }
+  },
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    }
+  ]
+}
 
