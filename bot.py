@@ -973,7 +973,7 @@ def main():
     application.post_init = post_init
 
     print("AdsNova Pro Pricing Panel Bot is running successfully...")
-    application.run_polling()
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
