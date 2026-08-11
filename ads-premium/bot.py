@@ -19,7 +19,6 @@ from database import (init_db, save_user, is_premium, get_user_expiry, get_bot_c
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# Heroku Environment Variables se directly uthayega
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 API_ID = 32222378
 API_HASH = "35fa506b69e293835d37158ea97557cf"
@@ -33,7 +32,6 @@ ADMIN_CONTACT_USERNAME = "AdsNova0"
 user_login_state = {}
 forwarded_counts = {}
 
-# --- HELPER: AUTO UPDATE BIO FUNCTION ---
 async def update_account_bio(client):
     try:
         bio_text = f"Bot: https://t.me/{BOT_USERNAME}"[:70]
@@ -41,7 +39,6 @@ async def update_account_bio(client):
     except Exception as e:
         print(f"Bio update error: {e}")
 
-# --- NINJA BACKGROUND FORWARDING WORKER (UNDETECTABLE CLEAN COPY MODE) ---
 async def background_forwarder(application):
     await asyncio.sleep(5)
     while True:
@@ -110,15 +107,12 @@ async def background_forwarder(application):
                             latest_msg = messages[0]
                             for grp_id in selected_groups:
                                 try:
-                                    # Ninja Mode: Treating as a fresh independent post to bypass all anti-bot traces
                                     if latest_msg.media:
                                         await client.send_file(int(grp_id), latest_msg.media, caption=latest_msg.text)
                                     elif latest_msg.text:
                                         await client.send_message(int(grp_id), latest_msg.text)
                                         
                                     forwarded_counts[user_id] = forwarded_counts.get(user_id, 0) + 1
-                                    
-                                    # Random human-like delay between groups (e.g. 3 to 7 seconds)
                                     await asyncio.sleep(random.randint(3, 7))
                                 except Exception as f_err:
                                     print(f"Send error to group {grp_id}: {f_err}")
@@ -127,7 +121,6 @@ async def background_forwarder(application):
                 except Exception as e:
                     print(f"Forwarder client error for user {user_id}: {e}")
                 
-                # Random interval variation for natural human behavior
                 await asyncio.sleep(interval + random.randint(1, 5))
                 
         except Exception as err:
@@ -439,7 +432,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             session_str = client.session.save()
             acc_name = f"{me.first_name or ''} {me.last_name or ''}".strip() or me.username or phone
             
-            # Auto set bot link in account bio
             await update_account_bio(client)
             
             save_user_session(user_id, slot_num, phone, session_str, acc_name)
@@ -487,7 +479,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             session_str = client.session.save()
             acc_name = f"{me.first_name or ''} {me.last_name or ''}".strip() or me.username or state["phone"]
             
-            # Auto set bot link in account bio
             await update_account_bio(client)
             
             save_user_session(user_id, slot_num, state["phone"], session_str, acc_name)
