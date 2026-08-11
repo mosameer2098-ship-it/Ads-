@@ -1,17 +1,9 @@
 {
-  "name": "AdsNova Bot",
-  "description": "Telegram bot with Razorpay payment integration",
+  "name": "AdsNova Pro Bot",
+  "description": "A Telegram automation bot",
   "env": {
-    "TELEGRAM_BOT_TOKEN": {
-      "description": "Enter your Telegram Bot Token from BotFather",
-      "required": true
-    },
-    "RAZORPAY_KEY_ID": {
-      "description": "Enter your Razorpay Key ID",
-      "required": true
-    },
-    "RAZORPAY_KEY_SECRET": {
-      "description": "Enter your Razorpay Key Secret",
+    "BOT_TOKEN": {
+      "description": "Your Telegram Bot Token",
       "required": true
     }
   },
@@ -21,4 +13,3 @@
     }
   ]
 }
-
