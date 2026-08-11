@@ -336,7 +336,8 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "👑 **Admin Dashboard** 👑\n\n"
             f"👥 Total Users: {total_users}\n"
             f"💎 Premium Users: {prem_users}\n"
-            f"🚀 Currently Active IDs: {active_ids}\n"
+            f"🚀 Currently Active IDs: {active_ids}\n\n"
+            "💡 *Tip:* Use `/userstats` to view detailed user forwarding statistics."
         )
         reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]])
         if update.callback_query: await update.callback_query.edit_message_text(admin_text, parse_mode="Markdown", reply_markup=reply_markup)
@@ -399,15 +400,25 @@ async def logout_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
-    await update.message.reply_text("👑 **Admin Panel:**\n- `/addsub <user_id>`\n- `/delsub <user_id>`\n- `/broadcast <msg>`", parse_mode="Markdown")
+    await update.message.reply_text(
+        "👑 **Admin Panel Commands:**\n\n"
+        "• `/addsub <user_id> [days]` - Custom days subscription (Default 30 days)\n"
+        "• `/delsub <user_id>` - Remove subscription\n"
+        "• `/userstats` - View user forwarding performance stats\n"
+        "• `/broadcast <msg>` - Send broadcast to all bot users",
+        parse_mode="Markdown"
+    )
 
 async def addsub_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
-    if not context.args: return
+    if not context.args:
+        await update.message.reply_text("❌ Usage: `/addsub <user_id> [days]`", parse_mode="Markdown")
+        return
     try:
         t_id = int(context.args[0])
-        add_premium_subscription(t_id, days=30)
-        await update.message.reply_text(f"✅ User `{t_id}` ko 30 din ka paid subscription mil gaya!", parse_mode="Markdown")
+        days = int(context.args[1]) if len(context.args) > 1 else 30
+        add_premium_subscription(t_id, days=days)
+        await update.message.reply_text(f"✅ User `{t_id}` ko **{days} din** ka paid subscription successfully mil gaya!", parse_mode="Markdown")
     except Exception as e: await update.message.reply_text(f"❌ Error: {e}")
 
 async def delsub_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -418,6 +429,23 @@ async def delsub_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         remove_premium_subscription(t_id)
         await update.message.reply_text(f"❌ User `{t_id}` ka subscription hata diya gaya.", parse_mode="Markdown")
     except Exception as e: await update.message.reply_text(f"❌ Error: {e}")
+
+async def userstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    
+    if not forwarded_counts and not failed_counts:
+        await update.message.reply_text("📊 Abhi tak kisi user ne session start karke messages forward nahi kiye hain.")
+        return
+        
+    stats_msg = "📊 **Users Forwarding Performance Stats:**\n\n"
+    all_users = set(list(forwarded_counts.keys()) + list(failed_counts.keys()))
+    
+    for u_id in all_users:
+        succ = forwarded_counts.get(u_id, 0)
+        fail = failed_counts.get(u_id, 0)
+        stats_msg += f"• User ID: `{u_id}`\n  ⚡ Sent: {succ} | ⚠️ Failed: {fail}\n\n"
+        
+    await update.message.reply_text(stats_msg, parse_mode="Markdown")
 
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
@@ -849,6 +877,7 @@ def main():
     application.add_handler(CommandHandler("admin", admin_command))
     application.add_handler(CommandHandler("addsub", addsub_command))
     application.add_handler(CommandHandler("delsub", delsub_command))
+    application.add_handler(CommandHandler("userstats", userstats_command))
     application.add_handler(CommandHandler("broadcast", broadcast_command))
     
     application.add_handler(CallbackQueryHandler(button_handler))
@@ -860,7 +889,7 @@ def main():
         
     application.post_init = post_init
 
-    print("AdsNova Pro Final Analytics Bot is running successfully...")
+    print("AdsNova Pro Ultimate Final Bot is running successfully...")
     application.run_polling()
 
 if __name__ == "__main__":
