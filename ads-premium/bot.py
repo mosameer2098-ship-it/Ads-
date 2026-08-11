@@ -30,7 +30,6 @@ ADMIN_CONTACT_USERNAME = "AdsNova0"
 user_login_state = {}
 forwarded_counts = {}
 
-# --- CHANNEL MEMBERSHIP CHECK ---
 async def check_channel_membership(user_id, context):
     if user_id == ADMIN_ID:
         return True
@@ -274,7 +273,6 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception: continue
     await update.message.reply_text("✅ Broadcast complete!")
 
-# --- MULTI-ACCOUNT LOGIN & COMPLETE DIALOG FETCHING ---
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
@@ -544,14 +542,59 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("👥 2 Auto Forward to Groups", callback_data="opt_2")],
             [InlineKeyboardButton("⏱️ 3 Time Interval Settings", callback_data="opt_3")],
             [InlineKeyboardButton("💬 4 Auto-Reply Share Message", callback_data="opt_4")],
+            [InlineKeyboardButton("🔄 Refresh Channels List", callback_data="refresh_channels")],
             [InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]
         ]
         await query.edit_message_text("⚙️ **AdsNova Settings Menu**\n\nAap apni zaroorat ke mutabiq option chun sakte hain:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
+    elif data == "refresh_channels":
+        active_slot = get_active_slot(user_id)
+        slot_data = get_slot_session(user_id, active_slot)
+        if not slot_data:
+            await query.answer("❌ Pehle account login karein!", show_alert=True)
+            return
+        
+        phone, session_str, _, _ = slot_data
+        client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
+        
+        try:
+            await client.connect()
+            if await client.is_user_authorized():
+                dialogs = await client.get_dialogs(limit=None)
+                groups = []
+                channels = []
+                for d in dialogs:
+                    if d.is_channel or d.is_group:
+                        entity = d.entity
+                        if getattr(entity, 'broadcast', False):
+                            channels.append((d.id, d.title))
+                        elif getattr(entity, 'megagroup', False) or d.is_group:
+                            groups.append((d.id, d.title))
+                        else:
+                            channels.append((d.id, d.title))
+                save_real_groups_and_channels(user_id, groups, channels)
+                await client.disconnect()
+                await query.answer("✅ Saare channels successfully refresh ho gaye hain!", show_alert=True)
+            else:
+                await client.disconnect()
+                await query.answer("❌ Session expired! Dubara login karein.", show_alert=True)
+        except Exception as e:
+            await query.answer(f"❌ Error: {e}", show_alert=True)
+        
+        keyboard = [
+            [InlineKeyboardButton("📢 1 Source Channel Setup", callback_data="opt_1")],
+            [InlineKeyboardButton("👥 2 Auto Forward to Groups", callback_data="opt_2")],
+            [InlineKeyboardButton("⏱️ 3 Time Interval Settings", callback_data="opt_3")],
+            [InlineKeyboardButton("💬 4 Auto-Reply Share Message", callback_data="opt_4")],
+            [InlineKeyboardButton("🔄 Refresh Channels List", callback_data="refresh_channels")],
+            [InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]
+        ]
+        await query.edit_message_text("⚙️ **AdsNova Settings Menu**\n\nChannels successfully refreshed!", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
     elif data == "opt_1" or data.startswith("set_chan_sel_"):
         channels = get_user_channels(user_id)
         if not channels:
-            await query.edit_message_text("❌ Aapke account mein koi channel nahi mila!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
+            await query.edit_message_text("❌ Aapke account mein koi channel nahi mila! Settings mein jakar 'Refresh Channels List' par click karein.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
             return
         if data.startswith("set_chan_sel_"):
             idx = int(data.split("_")[3])
@@ -637,7 +680,7 @@ def main():
     loop = asyncio.get_event_loop()
     loop.run_until_complete(set_bot_commands(application))
     
-    print("AdsNova Pro Bot is running successfully with Multi-Account support...")
+    print("AdsNova Pro Bot is running successfully...")
     application.run_polling()
 
 if __name__ == "__main__":
