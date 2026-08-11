@@ -30,6 +30,86 @@ ADMIN_CONTACT_USERNAME = "AdsNova0"
 user_login_state = {}
 forwarded_counts = {}
 
+# --- BACKGROUND FORWARDING WORKER ---
+async def background_forwarder(application):
+    await asyncio.sleep(5)  # Bot start hone ke 5 seconds baad loop shuru hoga
+    while True:
+        try:
+            import sqlite3
+            conn = sqlite3.connect("bot_database.db")
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            # Get all active sessions that are not stopped
+            cursor.execute("SELECT user_id, slot_number, session_string FROM user_sessions WHERE is_stopped = 0")
+            active_sessions = cursor.fetchall()
+            conn.close()
+            
+            for session_row in active_sessions:
+                user_id = session_row["user_id"]
+                slot_num = session_row["slot_number"]
+                session_str = session_row["session_string"]
+                
+                # Check user access (subscription)
+                if user_id != ADMIN_ID and not is_premium(user_id):
+                    continue
+                
+                config = get_bot_config(user_id)
+                source_chan = config[0]
+                interval = config[1] if config[1] else 30
+                
+                if not source_chan:
+                    continue
+                
+                groups = get_user_groups(user_id)
+                selected_groups = [g[0] for g in groups if g[2] == 1]
+                
+                if not selected_groups:
+                    continue
+                
+                try:
+                    client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
+                    await client.connect()
+                    
+                    if not await client.is_user_authorized():
+                        await client.disconnect()
+                        continue
+                    
+                    # Find source channel entity
+                    source_entity = None
+                    async for dialog in client.iter_dialogs(limit=100):
+                        if dialog.title.strip().lower() == source_chan.strip().lower():
+                            source_entity = dialog.entity
+                            break
+                    
+                    if not source_entity:
+                        await client.disconnect()
+                        continue
+                    
+                    # Get last message from source channel
+                    messages = await client.get_messages(source_entity, limit=1)
+                    if messages:
+                        latest_msg = messages[0]
+                        # Forward message to selected groups one by one with interval
+                        for grp_id in selected_groups:
+                            try:
+                                await client.forward_messages(entity=int(grp_id), messages=latest_msg)
+                                forwarded_counts[user_id] = forwarded_counts.get(user_id, 0) + 1
+                                await asyncio.sleep(2)
+                            except Exception:
+                                pass
+                    
+                    await client.disconnect()
+                except Exception as e:
+                    print(f"Forwarder error for user {user_id}: {e}")
+                
+                # Wait based on user interval configuration
+                await asyncio.sleep(interval)
+                
+        except Exception as err:
+            print(f"Background worker loop error: {err}")
+            await asyncio.sleep(10)
+
 async def check_channel_membership(user_id, context):
     if user_id == ADMIN_ID:
         return True
@@ -677,10 +757,13 @@ def main():
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(set_bot_commands(application))
-    
-    print("AdsNova Pro Bot is running successfully...")
+    # Start Background Forwarder Task when bot boots up
+    async def post_init(app):
+        asyncio.create_task(background_forwarder(app))
+        
+    application.post_init = post_init
+
+    print("AdsNova Pro Bot is running successfully with Auto-Forwarding Worker...")
     application.run_polling()
 
 if __name__ == "__main__":
