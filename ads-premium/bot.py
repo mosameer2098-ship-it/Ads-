@@ -2,7 +2,7 @@ import os
 import asyncio
 import logging
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from telethon import TelegramClient
@@ -31,6 +31,7 @@ ADMIN_CONTACT_USERNAME = "AdsNova0"
 
 user_login_state = {}
 forwarded_counts = {}
+user_languages = {} # User language storage ('en' or 'hi')
 
 async def update_account_bio(client):
     try:
@@ -39,6 +40,41 @@ async def update_account_bio(client):
     except Exception as e:
         print(f"Bio update error: {e}")
 
+# --- BACKGROUND EXPIRY REMINDER WORKER ---
+async def expiry_reminder_worker(application):
+    await asyncio.sleep(10)
+    while True:
+        try:
+            import sqlite3
+            conn = sqlite3.connect("bot_database.db")
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            # Check users whose subscription expires in ~24 hours
+            tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+            cursor.execute("SELECT user_id, expiry_date FROM subscriptions WHERE expiry_date LIKE ?", (f"{tomorrow}%",))
+            expiring_users = cursor.fetchall()
+            conn.close()
+            
+            for row in expiring_users:
+                u_id = row["user_id"]
+                try:
+                    await application.bot.send_message(
+                        chat_id=u_id,
+                        text="⚠️ **Alert:** Aapka AdsNova Pro subscription **kal khatam hone wala hai!**\n\nPlan ko uninterrupted chalane ke liye jaldi renew karein:\n🛒 Contact Admin: @AdsNova0",
+                        parse_mode="Markdown"
+                    )
+                    await asyncio.sleep(1)
+                except Exception:
+                    pass
+            
+            # Run check once every 12 hours
+            await asyncio.sleep(43200)
+        except Exception as e:
+            print(f"Expiry reminder worker error: {e}")
+            await asyncio.sleep(3600)
+
+# --- NINJA BACKGROUND FORWARDING WORKER ---
 async def background_forwarder(application):
     await asyncio.sleep(5)
     while True:
@@ -170,19 +206,28 @@ async def get_main_keyboard(user_id):
     active_slot = get_active_slot(user_id)
     slot_info = get_slot_session(user_id, active_slot)
     is_stopped = slot_info[3] if slot_info else 0
+    lang = user_languages.get(user_id, 'hi')
     
     keyboard = []
     if slot_info:
         if is_stopped:
-            keyboard.append([InlineKeyboardButton(f"🟢 Start Slot {active_slot}", callback_data=f"start_slot_{active_slot}"), InlineKeyboardButton("🚪 Logout", callback_data="logout_acc")])
+            btn_text = f"🟢 Start Slot {active_slot}" if lang == 'en' else f"🟢 Slot {active_Slot} Shuru Karein"
+            keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"start_slot_{active_slot}"), InlineKeyboardButton("🚪 Logout", callback_data="logout_acc")])
         else:
-            keyboard.append([InlineKeyboardButton(f"🛑 Stop Slot {active_slot}", callback_data=f"stop_slot_{active_slot}"), InlineKeyboardButton("🚪 Logout", callback_data="logout_acc")])
+            btn_text = f"🛑 Stop Slot {active_slot}" if lang == 'en' else f"🛑 Slot {active_Slot} Rokein"
+            keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"stop_slot_{active_slot}"), InlineKeyboardButton("🚪 Logout", callback_data="logout_acc")])
     else:
-        keyboard.append([InlineKeyboardButton(f"🔑 Login Slot {active_slot}", callback_data=f"slot_click_{active_slot}")])
+        btn_text = f"🔑 Login Slot {active_slot}" if lang == 'en' else f"🔑 Slot {active_Slot} Login Karein"
+        keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"slot_click_{active_slot}")])
         
-    keyboard.append([InlineKeyboardButton("📊 Status", callback_data="status"), InlineKeyboardButton("⚙️ Settings", callback_data="settings")])
-    keyboard.append([InlineKeyboardButton("💎 Subscription", callback_data="subscription"), InlineKeyboardButton("🎁 Free Trial (Referral)", callback_data="referral_info")])
-    keyboard.append([InlineKeyboardButton(f"🔄 Switch Account (Slot {active_slot})", callback_data="switch_acc")])
+    status_txt = "📊 Status" if lang == 'en' else "📊 Status"
+    settings_txt = "⚙️ Settings" if lang == 'en' else "⚙️ Settings"
+    sub_txt = "💎 Subscription" if lang == 'en' else "💎 Subscription"
+    trial_txt = "🎁 Free Trial" if lang == 'en' else "🎁 Free Trial (Referral)"
+    
+    keyboard.append([InlineKeyboardButton(status_txt, callback_data="status"), InlineKeyboardButton(settings_txt, callback_data="settings")])
+    keyboard.append([InlineKeyboardButton(sub_txt, callback_data="subscription"), InlineKeyboardButton(trial_txt, callback_data="referral_info")])
+    keyboard.append([InlineKeyboardButton(f"🌐 Language: {'English' if lang=='en' else 'Hinglish'}", callback_data="toggle_lang")])
     keyboard.append([InlineKeyboardButton("✨ Refresh", callback_data="refresh"), InlineKeyboardButton("🛠️ Help Centre", callback_data="help_centre")])
     return InlineKeyboardMarkup(keyboard)
 
@@ -211,7 +256,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         try:
                             await context.bot.send_message(
                                 chat_id=user.id, 
-                                text="🎁 **Badhai ho!** Referral link se join karne par aapko **2 din ka Free Trial** mil gaya hai ab aap bot ko test kar sakte hain!"
+                                text="🎁 **Badhai ho!** Referral link se join karne par aapko **2 din ka Free Trial** mil gaya hai!"
                             )
                         except Exception:
                             pass
@@ -222,8 +267,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_joined:
         join_text = (
             "🚨 **Channel Join Required!** 🚨\n\n"
-            "Bot ko use karne ke liye aapko hamara official channel join karna zaroori hai. "
-            "Channel join karne ke baad niche diye gaye **'Check Membership'** button par click karein:"
+            "Bot ko use karne ke liye channel join karna zaroori hai. Join karne ke baad niche button par click karein:"
         )
         keyboard = [
             [InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{FORCE_CHANNEL_USERNAME.replace('@', '')}")],
@@ -254,14 +298,14 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not await check_channel_membership(user_id, context):
         query = update.callback_query
-        join_msg = "❌ Aapne channel leave kar diya hai! Pehle channel join karein phir dashboard access hoga."
+        join_msg = "❌ Aapne channel leave kar diya hai! Pehle join karein."
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{FORCE_CHANNEL_USERNAME.replace('@', '')}"), InlineKeyboardButton("🔄 Check", callback_data="check_membership")]])
         if query: await query.edit_message_text(join_msg, reply_markup=kb)
         else: await update.message.reply_text(join_msg, reply_markup=kb)
         return
 
     if not check_user_access(user_id):
-        text = "❌ **Access Denied!**\nAapka subscription active nahi hai. Sabhi features ko use karne ke liye pehle subscription buy karein."
+        text = "❌ **Access Denied!**\nAapka subscription active nahi hai."
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🛒 Buy Subscription (Contact Admin)", url=f"https://t.me/{ADMIN_CONTACT_USERNAME}")],
             [InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]
@@ -415,10 +459,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await client.connect()
             sent = await client.send_code_request(text)
             state["phone_code_hash"] = sent.phone_code_hash
-            await update.message.reply_text("📩 OTP code aapke Telegram account par bhej diya gaya hai. Kripya OTP yahan enter karein (Jaise: 1 2 3 4 5):")
+            await update.message.reply_text("📩 OTP code aapke Telegram account par bhej diya gaya hai. Kripya OTP yahan enter karein:")
         except Exception as e:
             user_login_state.pop(user_id, None)
-            await update.message.reply_text(f"❌ Error sending OTP: {e}\nDubara login karne ke liye Menu se try karein.")
+            await update.message.reply_text(f"❌ Error sending OTP: {e}")
             
     elif step == "waiting_otp":
         state["otp"] = text.replace(" ", "")
@@ -433,7 +477,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             acc_name = f"{me.first_name or ''} {me.last_name or ''}".strip() or me.username or phone
             
             await update_account_bio(client)
-            
             save_user_session(user_id, slot_num, phone, session_str, acc_name)
             set_active_slot(user_id, slot_num)
             
@@ -457,17 +500,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await client.disconnect()
             user_login_state.pop(user_id, None)
             
-            await update.message.reply_text(f"✅ **Slot {slot_num} Connected Successfully!**\nAccount: {acc_name}\n\n✨ (Aapke bio mein bot ka link automatically set kar diya gaya hai!)", parse_mode="Markdown")
+            await update.message.reply_text(f"✅ **Slot {slot_num} Connected Successfully!**\nAccount: {acc_name}\n\n✨ (Aapke bio mein bot ka link automatically set ho gaya hai!)", parse_mode="Markdown")
             await start(update, context)
             
         except Exception as e:
             err_str = str(e)
             if "SessionPasswordNeeded" in err_str or "password" in err_str.lower() or "Two-steps verification" in err_str:
                 state["step"] = "waiting_password"
-                await update.message.reply_text("🔒 Aapke account par 2-Step Verification (Password) laga hua hai. Apna password yahan bhejein:")
+                await update.message.reply_text("🔒 Aapke account par 2-Step Verification laga hua hai. Apna password yahan bhejein:")
             else:
                 user_login_state.pop(user_id, None)
-                await update.message.reply_text(f"❌ Login Failed: {e}\nDubara koshish karein.")
+                await update.message.reply_text(f"❌ Login Failed: {e}")
                 
     elif step == "waiting_password":
         client = state["client"]
@@ -480,7 +523,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             acc_name = f"{me.first_name or ''} {me.last_name or ''}".strip() or me.username or state["phone"]
             
             await update_account_bio(client)
-            
             save_user_session(user_id, slot_num, state["phone"], session_str, acc_name)
             set_active_slot(user_id, slot_num)
             
@@ -504,18 +546,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await client.disconnect()
             user_login_state.pop(user_id, None)
             
-            await update.message.reply_text(f"✅ **Slot {slot_num} Connected Successfully!**\nAccount: {acc_name}\n\n✨ (Aapke bio mein bot ka link automatically set kar diya gaya hai!)", parse_mode="Markdown")
+            await update.message.reply_text(f"✅ **Slot {slot_num} Connected Successfully!**\nAccount: {acc_name}\n\n✨ (Aapke bio mein bot ka link automatically set ho gaya hai!)", parse_mode="Markdown")
             await start(update, context)
             
         except Exception as e:
             user_login_state.pop(user_id, None)
-            await update.message.reply_text(f"❌ Password Error: {e}\nDubara koshish karein.")
+            await update.message.reply_text(f"❌ Password Error: {e}")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
     user_id = query.from_user.id
+
+    if data == "toggle_lang":
+        current_lang = user_languages.get(user_id, 'hi')
+        new_lang = 'en' if current_lang == 'hi' else 'hi'
+        user_languages[user_id] = new_lang
+        await query.answer(f"Language changed to {'English' if new_lang=='en' else 'Hinglish'}!", show_alert=True)
+        await start(update, context)
+        return
 
     if data == "check_membership":
         is_joined = await check_channel_membership(user_id, context)
@@ -524,7 +574,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not await check_channel_membership(user_id, context):
-        join_text = "❌ **Channel Join Required!**\nAapne channel leave kar diya hai. Bot use karne ke liye pehle channel join karein:"
+        join_text = "❌ **Channel Join Required!**\nAapne channel leave kar diya hai."
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{FORCE_CHANNEL_USERNAME.replace('@', '')}")],
             [InlineKeyboardButton("🔄 Check Membership", callback_data="check_membership")]
@@ -555,7 +605,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sub_text = (
                 "💎 **Subscription Status & Details** 💎\n\n"
                 "🌟 Your Subscription: Inactive ❌\n\n"
-                "Plan buy karne ke liye niche diye gaye button par click karke Admin ko message karein:"
+                "Plan buy karne ke liye Admin ko message karein:"
             )
         
         keyboard = []
@@ -574,33 +624,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🎁 **Free Trial & Referral System** 🎁\n\n"
             "Aap apna yeh unique referral link doston ke sath share karein:\n"
             f"`{ref_link}`\n\n"
-            "💡 **Note:** Jo bhi is link se bot start karega, use **2 din is bot ko test karne ke liye free trial** milega. Agar pasand aaye toh subscription buy kar sakta hai!"
+            "💡 **Note:** Jo bhi is link se bot start karega, use **2 din ka free trial** milega!"
         )
         keyboard = [
             [InlineKeyboardButton("🚀 Share Link Now", url=share_url)],
             [InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]
         ]
-        await query.edit_message_text(
-            ref_msg, 
-            parse_mode="Markdown", 
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        await query.edit_message_text(ref_msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     if data == "help_centre":
         help_text = (
-            "💡 **AdsNova Pro - Help & Guide** 💡\n\n"
-            "1️⃣ **Login / Add Accounts:** Apne multiple Telegram accounts (upto 20 slots) connect karne ke liye iska use karein.\n"
-            "2️⃣ **Source Channel Setup:** Jahan se ads/messages forward karne hain, us channel ko select karein.\n"
-            "3️⃣ **Auto Forward to Groups:** Jinki groups mein ads bhejni hain, unhe select karein.\n"
-            "4️⃣ **Time Interval:** Messages ke beech ka gap (jaise 20s, 30s) set karein.\n\n"
-            f"📞 Kisi bhi samasya ya subscription ke liye Admin se sampark karein: @{ADMIN_CONTACT_USERNAME}"
+            "💡 **AdsNova Pro - Help Centre** 💡\n\n"
+            "1️⃣ **Login Accounts:** Multiple Telegram accounts connect karein.\n"
+            "2️⃣ **Source Channel:** Jahan se messages uthane hain wo set karein.\n"
+            "3️⃣ **Target Groups:** Jahan ads bhejni hain unhe select karein.\n"
+            "4️⃣ **Time Interval:** Gap set karein.\n\n"
+            f"📞 Admin Contact: @{ADMIN_CONTACT_USERNAME}"
         )
-        await query.edit_message_text(
-            help_text, 
-            parse_mode="Markdown", 
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]])
-        )
+        await query.edit_message_text(help_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
         return
 
     if data == "refresh":
@@ -608,7 +650,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not check_user_access(user_id):
-        text = "❌ **Subscription Required!**\nAapka subscription active nahi hai. Bot ke features use karne ke liye pehle plan buy karein."
+        text = "❌ **Subscription Required!**\nAapka subscription active nahi hai."
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🛒 Buy Subscription (Contact Admin)", url=f"https://t.me/{ADMIN_CONTACT_USERNAME}")],
             [InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]
@@ -637,7 +679,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 row = []
         keyboard.append([InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")])
         
-        text = f"🔄 **Switch Account (Multi-Account Slots)**\n\n📍 Active Slot: {active_slot}\n📊 {filled_slots}/20 slots filled\n\n(🟢 = Connected, 🔴 = Saved, 👉 = Current Active)"
+        text = f"🔄 **Switch Account (Slots)**\n\n📍 Active Slot: {active_slot}\n📊 {filled_slots}/20 slots filled"
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("slot_click_"):
@@ -648,28 +690,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(f"✅ Switched to Slot {slot_num}!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]))
         else:
             user_login_state[user_id] = {"step": "waiting_phone", "slot_number": slot_num}
-            await query.edit_message_text(f"📱 **Telegram Account Login (Slot {slot_num})**\n\nApna Phone Number country code ke sath bhejein (Jaise: +919876543210):", parse_mode="Markdown")
+            await query.edit_message_text(f"📱 **Telegram Account Login (Slot {slot_num})**\n\nApna Phone Number country code ke sath bhejein (+91...):", parse_mode="Markdown")
 
     elif data.startswith("stop_slot_"):
         slot_num = int(data.split("_")[2])
         set_slot_stopped(user_id, slot_num, 1)
-        welcome_text = "💎 **AdsNova Pro Bot - Main Menu** 💎\n\n🛑 Slot Stopped Successfully."
         kb = await get_main_keyboard(user_id)
-        await query.edit_message_text(welcome_text, parse_mode="Markdown", reply_markup=kb)
+        await query.edit_message_text("💎 **AdsNova Pro Bot - Main Menu** 💎\n\n🛑 Slot Stopped.", parse_mode="Markdown", reply_markup=kb)
 
     elif data.startswith("start_slot_"):
         slot_num = int(data.split("_")[2])
         set_slot_stopped(user_id, slot_num, 0)
-        welcome_text = "💎 **AdsNova Pro Bot - Main Menu** 💎\n\n🟢 Slot Restarted Successfully."
         kb = await get_main_keyboard(user_id)
-        await query.edit_message_text(welcome_text, parse_mode="Markdown", reply_markup=kb)
+        await query.edit_message_text("💎 **AdsNova Pro Bot - Main Menu** 💎\n\n🟢 Slot Restarted.", parse_mode="Markdown", reply_markup=kb)
 
     elif data == "logout_acc":
         active_slot = get_active_slot(user_id)
         remove_user_session(user_id, active_slot)
-        welcome_text = f"💎 **AdsNova Pro Bot - Main Menu** 💎\n\n🚪 Slot {active_slot} Logged Out Successfully."
         kb = await get_main_keyboard(user_id)
-        await query.edit_message_text(welcome_text, parse_mode="Markdown", reply_markup=kb)
+        await query.edit_message_text(f"💎 **AdsNova Pro Bot - Main Menu** 💎\n\n🚪 Slot {active_slot} Logged Out.", parse_mode="Markdown", reply_markup=kb)
 
     elif data == "settings":
         keyboard = [
@@ -680,7 +719,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔄 Refresh Channels List", callback_data="refresh_channels")],
             [InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]
         ]
-        await query.edit_message_text("⚙️ **AdsNova Settings Menu**\n\nAap apni zaroorat ke mutabiq option chun sakte hain:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text("⚙️ **AdsNova Settings Menu**", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "refresh_channels":
         active_slot = get_active_slot(user_id)
@@ -709,7 +748,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             channels.append((d.id, d.title))
                 save_real_groups_and_channels(user_id, groups, channels)
                 await client.disconnect()
-                await query.answer("✅ Saare channels successfully refresh ho gaye hain!", show_alert=True)
+                await query.answer("✅ Saare channels refresh ho gaye!", show_alert=True)
             else:
                 await client.disconnect()
                 await query.answer("❌ Session expired! Dubara login karein.", show_alert=True)
@@ -729,13 +768,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "opt_1" or data.startswith("set_chan_sel_"):
         channels = get_user_channels(user_id)
         if not channels:
-            await query.edit_message_text("❌ Aapke account mein koi channel nahi mila! Settings mein jakar 'Refresh Channels List' par click karein.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
+            await query.edit_message_text("❌ Aapke account mein koi channel nahi mila! Refresh karein.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
             return
         if data.startswith("set_chan_sel_"):
             idx = int(data.split("_")[3])
             c_name = channels[idx][1]
             set_source_channel(user_id, c_name)
-            await query.edit_message_text(f"✅ Source Channel Successfully Set to '{c_name}'!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
+            await query.edit_message_text(f"✅ Source Channel Set: '{c_name}'", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
             return
         keyboard = [[InlineKeyboardButton(f"📌 {cname}", callback_data=f"set_chan_sel_{i}")] for i, (cid, cname) in enumerate(channels)]
         keyboard.append([InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")])
@@ -757,7 +796,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "grp_select_all": set_all_groups_selection(user_id, 1); groups = get_user_groups(user_id)
         elif data == "grp_deselect_all": set_all_groups_selection(user_id, 0); groups = get_user_groups(user_id)
         elif data == "grp_done":
-            await query.edit_message_text("✅ Selected groups successfully saved!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
+            await query.edit_message_text("✅ Groups saved successfully!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
             return
 
         per_page = 10
@@ -782,18 +821,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("⚡ 120s", callback_data="time_120"), InlineKeyboardButton("⚡ 300s", callback_data="time_300")],
             [InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]
         ]
-        await query.edit_message_text(f"⏱️ **Time Interval Settings**\n\nCurrent Active Time: {current_time} seconds", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text(f"⏱️ **Time Interval Settings**\n\nCurrent: {current_time} seconds", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("time_"):
         t_val = int(data.split("_")[1])
         set_time_interval(user_id, t_val)
-        await query.edit_message_text(f"✅ Time Interval Successfully Set to {t_val}s!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
+        await query.edit_message_text(f"✅ Time Interval Set to {t_val}s!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
 
     elif data == "opt_4":
         if user_id != ADMIN_ID: return
         user_login_state[user_id] = {"step": "waiting_custom_msg"}
         current_msg = get_custom_share_message(ADMIN_ID)
-        await query.edit_message_text(f"💬 **Custom Auto-Reply Share Message**\n\nCurrent message:\n`{current_msg}`\n\nNaya message bhejein:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
+        await query.edit_message_text(f"💬 **Custom Share Message**\n\nCurrent:\n`{current_msg}`\n\nNaya message bhejein:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
 
 def main():
     init_db()
@@ -814,10 +853,11 @@ def main():
 
     async def post_init(app):
         asyncio.create_task(background_forwarder(app))
+        asyncio.create_task(expiry_reminder_worker(app))
         
     application.post_init = post_init
 
-    print("AdsNova Pro Bot is running successfully...")
+    print("AdsNova Pro Bot is running successfully with all advanced features...")
     application.run_polling()
 
 if __name__ == "__main__":
