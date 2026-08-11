@@ -6,6 +6,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotComm
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from telethon import TelegramClient
 from telethon.sessions import StringSession
+from telethon.tl.functions.account import UpdateProfileRequest
 from database import (init_db, save_user, is_premium, get_user_expiry, get_bot_config, 
                       set_source_channel, set_time_interval, get_user_groups, 
                       toggle_group_selection, set_all_groups_selection, get_user_channels, 
@@ -28,8 +29,20 @@ BOT_USERNAME = "Automatic_posttbot"
 FORCE_CHANNEL_USERNAME = "@iqra_music_support"
 ADMIN_CONTACT_USERNAME = "AdsNova0"
 
+# Bio mein set hone wala link text
+BOT_BIO_LINK_TEXT = f"🚀 Bot: https://t.me/{BOT_USERNAME}"
+
 user_login_state = {}
 forwarded_counts = {}
+
+# --- HELPER: AUTO UPDATE BIO FUNCTION ---
+async def update_account_bio(client):
+    try:
+        # Telegram bio ki max limit 70 characters hoti hai
+        bio_text = f"Bot: https://t.me/{BOT_USERNAME}"[:70]
+        await client(UpdateProfileRequest(about=bio_text))
+    except Exception as e:
+        print(f"Bio update error: {e}")
 
 # --- BACKGROUND FORWARDING WORKER (CLEAN COPY MODE WITHOUT TAG) ---
 async def background_forwarder(application):
@@ -100,7 +113,6 @@ async def background_forwarder(application):
                             latest_msg = messages[0]
                             for grp_id in selected_groups:
                                 try:
-                                    # Send copy of message to remove 'Forwarded from' header tag
                                     if latest_msg.media:
                                         await client.send_file(int(grp_id), latest_msg.media, caption=latest_msg.text)
                                     elif latest_msg.text:
@@ -136,6 +148,29 @@ def check_user_access(user_id):
     if user_id == ADMIN_ID:
         return True
     return is_premium(user_id)
+
+def get_subscription_type_label(user_id):
+    if user_id == ADMIN_ID:
+        return "Lifetime (Admin) ♾️"
+    
+    try:
+        import sqlite3
+        conn = sqlite3.connect("bot_database.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT plan_type FROM subscriptions WHERE user_id = ? AND expiry_date > ?", (user_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            p_type = row[0]
+            if p_type == "referral" or p_type == "trial":
+                return "Free Referral Trial 🎁"
+            elif p_type == "paid":
+                return "Paid Premium 💎"
+    except Exception:
+        pass
+    
+    return "Paid Premium 💎"
 
 async def get_main_keyboard(user_id):
     active_slot = get_active_slot(user_id)
@@ -234,7 +269,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_user_access(user_id):
         text = "❌ **Access Denied!**\nAapka subscription active nahi hai. Sabhi features ko use karne ke liye pehle subscription buy karein."
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🛒 Buy Subscription", url=f"https://t.me/{ADMIN_CONTACT_USERNAME}")],
+            [InlineKeyboardButton("🛒 Buy Subscription (Contact Admin)", url=f"https://t.me/{ADMIN_CONTACT_USERNAME}")],
             [InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]
         ])
         if update.callback_query: await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
@@ -281,7 +316,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     acc_name = slot_data[2] if slot_data else "N/A"
     is_stopped = slot_data[3] if slot_data else 0
     forwarding_status = "Stopped" if is_stopped else "Active (Running)"
-    sub_status = "Active ✅" if is_premium(user_id) else "Inactive ❌"
+    sub_type_label = get_subscription_type_label(user_id)
     groups = get_user_groups(user_id)
     sel_groups = sum(1 for g in groups if g[2] == 1)
     msg_count = forwarded_counts.get(user_id, 0)
@@ -291,7 +326,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🆔 User ID: `{user_id}`\n"
         f"📂 Active Account Slot: Slot {active_slot}\n"
         f"🔐 Login Status: {login_status}\n"
-        f"🌟 Subscription: {sub_status}\n\n"
+        f"🌟 Subscription: Active ✅ ({sub_type_label})\n\n"
         f"🚀 Forwarding Status: {forwarding_status}\n"
         f"📢 Source Channel: {chan}\n"
         f"👥 Target Groups: {sel_groups} groups selected\n"
@@ -331,7 +366,7 @@ async def addsub_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         t_id = int(context.args[0])
         add_premium_subscription(t_id, days=30)
-        await update.message.reply_text(f"✅ User `{t_id}` ko 30 din ka subscription mil gaya!", parse_mode="Markdown")
+        await update.message.reply_text(f"✅ User `{t_id}` ko 30 din ka paid subscription mil gaya!", parse_mode="Markdown")
     except Exception as e: await update.message.reply_text(f"❌ Error: {e}")
 
 async def delsub_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -403,6 +438,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             session_str = client.session.save()
             acc_name = f"{me.first_name or ''} {me.last_name or ''}".strip() or me.username or phone
             
+            # Auto set bot link in account bio
+            await update_account_bio(client)
+            
             save_user_session(user_id, slot_num, phone, session_str, acc_name)
             set_active_slot(user_id, slot_num)
             
@@ -426,7 +464,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await client.disconnect()
             user_login_state.pop(user_id, None)
             
-            await update.message.reply_text(f"✅ **Slot {slot_num} Connected Successfully!**\nAccount: {acc_name}", parse_mode="Markdown")
+            await update.message.reply_text(f"✅ **Slot {slot_num} Connected Successfully!**\nAccount: {acc_name}\n\n✨ (Aapke bio mein bot ka link automatically set kar diya gaya hai!)", parse_mode="Markdown")
             await start(update, context)
             
         except Exception as e:
@@ -447,6 +485,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             me = await client.get_me()
             session_str = client.session.save()
             acc_name = f"{me.first_name or ''} {me.last_name or ''}".strip() or me.username or state["phone"]
+            
+            # Auto set bot link in account bio
+            await update_account_bio(client)
             
             save_user_session(user_id, slot_num, state["phone"], session_str, acc_name)
             set_active_slot(user_id, slot_num)
@@ -471,7 +512,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await client.disconnect()
             user_login_state.pop(user_id, None)
             
-            await update.message.reply_text(f"✅ **Slot {slot_num} Connected Successfully!**\nAccount: {acc_name}", parse_mode="Markdown")
+            await update.message.reply_text(f"✅ **Slot {slot_num} Connected Successfully!**\nAccount: {acc_name}\n\n✨ (Aapke bio mein bot ka link automatically set kar diya gaya hai!)", parse_mode="Markdown")
             await start(update, context)
             
         except Exception as e:
@@ -506,17 +547,28 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "subscription":
         if user_id == ADMIN_ID:
-            sub_text = "💎 **Subscription Status & Details** 💎\n\n🌟 Your Subscription: Active ✅\n⏳ Expiry Date: `Lifetime (Admin) ♾️`\n⏱️ Remaining Time: `Unlimited`"
+            sub_text = "💎 **Subscription Status & Details** 💎\n\n🌟 Your Subscription: Active ✅\n🏷️ Type: `Lifetime (Admin) ♾️`\n⏳ Expiry Date: `Unlimited`"
         elif is_premium(user_id):
             expiry_str = get_user_expiry(user_id)
             remaining = get_remaining_days(user_id)
-            sub_text = f"💎 **Subscription Status & Details** 💎\n\n🌟 Your Subscription: Active ✅\n⏳ Expiry Date: `{expiry_str}`\n⏱️ Remaining Time: `{remaining}`"
+            sub_type_label = get_subscription_type_label(user_id)
+            sub_text = (
+                "💎 **Subscription Status & Details** 💎\n\n"
+                f"🌟 Your Subscription: Active ✅\n"
+                f"🏷️ Type: `{sub_type_label}`\n"
+                f"⏳ Expiry Date: `{expiry_str}`\n"
+                f"⏱️ Remaining Time: `{remaining}`"
+            )
         else:
-            sub_text = "💎 **Subscription Status & Details** 💎\n\n🌟 Your Subscription: Inactive ❌\n\nAapka subscription active nahi hai. Plan buy karne ke liye niche click karein:"
+            sub_text = (
+                "💎 **Subscription Status & Details** 💎\n\n"
+                "🌟 Your Subscription: Inactive ❌\n\n"
+                "Plan buy karne ke liye niche diye gaye button par click karke Admin ko message karein:"
+            )
         
         keyboard = []
         if user_id != ADMIN_ID and not is_premium(user_id):
-            keyboard.append([InlineKeyboardButton("🛒 Buy Subscription", url=f"https://t.me/{ADMIN_CONTACT_USERNAME}")])
+            keyboard.append([InlineKeyboardButton("🛒 Buy Subscription (Contact Admin)", url=f"https://t.me/{ADMIN_CONTACT_USERNAME}")])
         keyboard.append([InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")])
         await query.edit_message_text(sub_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
         return
@@ -566,7 +618,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_user_access(user_id):
         text = "❌ **Subscription Required!**\nAapka subscription active nahi hai. Bot ke features use karne ke liye pehle plan buy karein."
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🛒 Buy Subscription", url=f"https://t.me/{ADMIN_CONTACT_USERNAME}")],
+            [InlineKeyboardButton("🛒 Buy Subscription (Contact Admin)", url=f"https://t.me/{ADMIN_CONTACT_USERNAME}")],
             [InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]
         ])
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
