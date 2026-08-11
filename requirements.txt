@@ -1,4 +1,4 @@
 python-telegram-bot==20.7
 python-dotenv==1.1.0
-razorpay
 telethon==1.34.0
+
