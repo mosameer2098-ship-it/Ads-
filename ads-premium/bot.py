@@ -30,7 +30,7 @@ ADMIN_CONTACT_USERNAME = "AdsNova0"
 user_login_state = {}
 forwarded_counts = {}
 
-# --- BACKGROUND FORWARDING WORKER (ROBUST CHANNEL MATCHING) ---
+# --- BACKGROUND FORWARDING WORKER (CLEAN COPY MODE WITHOUT TAG) ---
 async def background_forwarder(application):
     await asyncio.sleep(5)
     while True:
@@ -73,7 +73,6 @@ async def background_forwarder(application):
                         await client.disconnect()
                         continue
                     
-                    # Find source channel entity by checking channels list in db or matching title/username
                     source_entity = None
                     channels = get_user_channels(user_id)
                     target_channel_id = None
@@ -100,14 +99,16 @@ async def background_forwarder(application):
                             latest_msg = messages[0]
                             for grp_id in selected_groups:
                                 try:
-                                    await client.forward_messages(entity=int(grp_id), messages=latest_msg)
+                                    # Send copy of message to remove 'Forwarded from' header tag
+                                    if latest_msg.media:
+                                        await client.send_file(int(grp_id), latest_msg.media, caption=latest_msg.text)
+                                    elif latest_msg.text:
+                                        await client.send_message(int(grp_id), latest_msg.text)
+                                        
                                     forwarded_counts[user_id] = forwarded_counts.get(user_id, 0) + 1
-                                    print(f"Forwarded message successfully to group {grp_id}")
                                     await asyncio.sleep(2)
                                 except Exception as f_err:
-                                    print(f"Forward error to group {grp_id}: {f_err}")
-                    else:
-                        print(f"Source channel '{source_chan_name}' could not be resolved.")
+                                    print(f"Send error to group {grp_id}: {f_err}")
                     
                     await client.disconnect()
                 except Exception as e:
