@@ -30,6 +30,7 @@ FORCE_CHANNEL_USERNAME = "@iqra_music_support"
 ADMIN_CONTACT_USERNAME = "AdsNova0"
 
 user_login_state = {}
+admin_sub_target = {}
 forwarded_counts = {}
 failed_counts = {}
 user_languages = {}
@@ -337,9 +338,13 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👥 Total Users: {total_users}\n"
             f"💎 Premium Users: {prem_users}\n"
             f"🚀 Currently Active IDs: {active_ids}\n\n"
-            "💡 *Tip:* Use `/userstats` to view detailed user forwarding statistics."
+            "👇 Quick Manage Subscriptions:"
         )
-        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]])
+        reply_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("💎 Manage Subscriptions (Plans)", callback_data="admin_manage_sub")],
+            [InlineKeyboardButton("📊 View User Stats", callback_data="admin_user_stats")],
+            [InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]
+        ])
         if update.callback_query: await update.callback_query.edit_message_text(admin_text, parse_mode="Markdown", reply_markup=reply_markup)
         else: await update.message.reply_text(admin_text, parse_mode="Markdown", reply_markup=reply_markup)
         return
@@ -400,14 +405,17 @@ async def logout_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
-    await update.message.reply_text(
-        "👑 **Admin Panel Commands:**\n\n"
-        "• `/addsub <user_id> [days]` - Custom days subscription (Default 30 days)\n"
-        "• `/delsub <user_id>` - Remove subscription\n"
-        "• `/userstats` - View user forwarding performance stats\n"
-        "• `/broadcast <msg>` - Send broadcast to all bot users",
-        parse_mode="Markdown"
+    
+    admin_text = (
+        "👑 **Admin Control Panel** 👑\n\n"
+        "Aap niche diye gaye button se direct plans manage kar sakte hain ya stats dekh sakte hain:"
     )
+    reply_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💎 Manage Subscriptions (Plans)", callback_data="admin_manage_sub")],
+        [InlineKeyboardButton("📊 View User Stats", callback_data="admin_user_stats")],
+        [InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]
+    ])
+    await update.message.reply_text(admin_text, parse_mode="Markdown", reply_markup=reply_markup)
 
 async def addsub_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
@@ -472,6 +480,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
     
+    if user_id == ADMIN_ID and user_id in admin_sub_target and admin_sub_target[user_id].get("step") == "waiting_target_id":
+        try:
+            target_id = int(text)
+            admin_sub_target[user_id]["target_id"] = target_id
+            admin_sub_target[user_id]["step"] = "select_plan"
+            
+            keyboard = [
+                [InlineKeyboardButton("💎 ₹399 - 1 Month (30 Days)", callback_data="sub_plan_30")],
+                [InlineKeyboardButton("💎 ₹799 - 3 Month (90 Days)", callback_data="sub_plan_90")],
+                [InlineKeyboardButton("💎 ₹1999 - 6 Month (180 Days)", callback_data="sub_plan_180")],
+                [InlineKeyboardButton("🔙 Cancel", callback_data="admin_cancel")]
+            ]
+            await update.message.reply_text(
+                f"✅ Target User ID: `{target_id}`\n\nAb niche diye gaye plans mein se koi ek select karein:",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return
+        except ValueError:
+            await update.message.reply_text("❌ Kripya valid numeric User ID bhejein:")
+            return
+
     if user_id not in user_login_state:
         return
         
@@ -590,6 +620,54 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_id = query.from_user.id
 
+    if user_id == ADMIN_ID:
+        if data == "admin_manage_sub":
+            admin_sub_user_state = admin_sub_target.setdefault(user_id, {})
+            admin_sub_user_state["step"] = "waiting_target_id"
+            await query.edit_message_text(
+                "💎 **Manage Subscriptions Panel**\n\nKripya us user ki **Telegram ID** message mein bhejein jise subscription dena hai:",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancel", callback_data="admin_cancel")]])
+            )
+            return
+            
+        elif data == "admin_user_stats":
+            if not forwarded_counts and not failed_counts:
+                await query.edit_message_text("📊 Abhi tak kisi user ne messages forward nahi kiye hain.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="main_menu")]]))
+                return
+            stats_msg = "📊 **Users Forwarding Performance Stats:**\n\n"
+            all_users = set(list(forwarded_counts.keys()) + list(failed_counts.keys()))
+            for u_id in all_users:
+                succ = forwarded_counts.get(u_id, 0)
+                fail = failed_counts.get(u_id, 0)
+                stats_msg += f"• User ID: `{u_id}`\n  ⚡ Sent: {succ} | ⚠️ Failed: {fail}\n\n"
+            await query.edit_message_text(stats_msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="main_menu")]]))
+            return
+            
+        elif data.startswith("sub_plan_"):
+            days_map = {"30": 30, "90": 90, "180": 180}
+            days_val = days_map.get(data.split("_")[2], 30)
+            
+            target_data = admin_sub_target.get(user_id, {})
+            target_id = target_data.get("target_id")
+            
+            if target_id:
+                add_premium_subscription(target_id, days=days_val)
+                admin_sub_target.pop(user_id, None)
+                await query.edit_message_text(
+                    f"✅ Success! User `{target_id}` ko successfully **{days_val} days** ka plan assign kar diya gaya hai!",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]])
+                )
+            else:
+                await query.edit_message_text("❌ Error: Target user ID not found.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="main_menu")]]))
+            return
+            
+        elif data == "admin_cancel":
+            admin_sub_target.pop(user_id, None)
+            await start(update, context)
+            return
+
     if data == "toggle_lang":
         current_lang = user_languages.get(user_id, 'hi')
         new_lang = 'en' if current_lang == 'hi' else 'hi'
@@ -615,6 +693,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "main_menu":
         user_login_state.pop(user_id, None)
+        admin_sub_target.pop(user_id, None)
         await start(update, context)
         return
 
@@ -634,8 +713,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             sub_text = (
-                "💎 **Subscription Details** 💎\n\n"
+                "💎 **Subscription Details & Pricing Plans** 💎\n\n"
                 "🌟 Status: Inactive ❌\n\n"
+                "📦 **Available Plans:**\n"
+                "• **₹399** - 1 Month (30 Days)\n"
+                "• **₹799** - 3 Months (90 Days)\n"
+                "• **₹1999** - 6 Months (180 Days)\n\n"
                 "Plan buy karne ke liye niche button par click karke Admin ko message karein:"
             )
         
@@ -889,7 +972,7 @@ def main():
         
     application.post_init = post_init
 
-    print("AdsNova Pro Ultimate Final Bot is running successfully...")
+    print("AdsNova Pro Pricing Panel Bot is running successfully...")
     application.run_polling()
 
 if __name__ == "__main__":
