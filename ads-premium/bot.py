@@ -17,6 +17,7 @@ from database import (init_db, save_user, is_premium, get_user_expiry, get_bot_c
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
+# Heroku Environment Variables se directly uthayega
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 API_ID = 32222378
 API_HASH = "35fa506b69e293835d37158ea97557cf"
