@@ -30,7 +30,7 @@ ADMIN_CONTACT_USERNAME = "AdsNova0"
 user_login_state = {}
 forwarded_counts = {}
 
-# --- BACKGROUND FORWARDING WORKER (PUBLIC & PRIVATE CHANNELS SUPPORT) ---
+# --- BACKGROUND FORWARDING WORKER (ROBUST CHANNEL MATCHING) ---
 async def background_forwarder(application):
     await asyncio.sleep(5)
     while True:
@@ -53,10 +53,10 @@ async def background_forwarder(application):
                     continue
                 
                 config = get_bot_config(user_id)
-                source_chan = config[0]
+                source_chan_name = config[0]
                 interval = config[1] if config[1] else 30
                 
-                if not source_chan:
+                if not source_chan_name:
                     continue
                 
                 groups = get_user_groups(user_id)
@@ -73,12 +73,26 @@ async def background_forwarder(application):
                         await client.disconnect()
                         continue
                     
-                    # Search source channel entity by matching name or ID across all dialogs (supports both public & private)
+                    # Find source channel entity by checking channels list in db or matching title/username
                     source_entity = None
-                    async for dialog in client.iter_dialogs(limit=200):
-                        if dialog.title.strip().lower() == source_chan.strip().lower() or str(dialog.id) == str(source_chan):
-                            source_entity = dialog.entity
+                    channels = get_user_channels(user_id)
+                    target_channel_id = None
+                    for cid, cname in channels:
+                        if cname.strip().lower() == source_chan_name.strip().lower():
+                            target_channel_id = cid
                             break
+                    
+                    if target_channel_id:
+                        try:
+                            source_entity = await client.get_entity(int(target_channel_id))
+                        except Exception:
+                            pass
+                    
+                    if not source_entity:
+                        async for dialog in client.iter_dialogs(limit=100):
+                            if dialog.title.strip().lower() == source_chan_name.strip().lower() or str(dialog.id) == str(source_chan_name):
+                                source_entity = dialog.entity
+                                break
                     
                     if source_entity:
                         messages = await client.get_messages(source_entity, limit=1)
@@ -88,13 +102,16 @@ async def background_forwarder(application):
                                 try:
                                     await client.forward_messages(entity=int(grp_id), messages=latest_msg)
                                     forwarded_counts[user_id] = forwarded_counts.get(user_id, 0) + 1
+                                    print(f"Forwarded message successfully to group {grp_id}")
                                     await asyncio.sleep(2)
-                                except Exception:
-                                    pass
+                                except Exception as f_err:
+                                    print(f"Forward error to group {grp_id}: {f_err}")
+                    else:
+                        print(f"Source channel '{source_chan_name}' could not be resolved.")
                     
                     await client.disconnect()
                 except Exception as e:
-                    print(f"Forwarder error for user {user_id}: {e}")
+                    print(f"Forwarder client error for user {user_id}: {e}")
                 
                 await asyncio.sleep(interval)
                 
