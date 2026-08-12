@@ -1,7 +1,19 @@
-<h3 align="center"> — 「 <> Deploy On Heroku </> 」 — </h3>
+# AdsNova Pro Bot
 
-<p align="center">
-<a href="https://dashboard.heroku.com/new?template=https://github.com/mosameer2098-ship-it/Ads-">
-  <img src="https://img.shields.io/badge/DEPLOYS%20ON%20HEROKU-black?style=for-the-badge&logo=heroku&logoColor=white" width="250" height="45">
-</a>
-</p>
+Telegram automation and advertising bot.
+
+## 🚀 Deploy to Heroku
+
+[![Deploy](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/mosameer2098-ship-it/Ads-)
+
+Click the button above to deploy AdsNova Pro directly to Heroku.
+
+During deployment, enter:
+
+- BOT_TOKEN
+- API_ID
+- API_HASH
+- ADMIN_ID
+- BOT_USERNAME
+- FORCE_CHANNEL_USERNAME
+- ADMIN_CONTACT_USERNAME
