@@ -14,7 +14,6 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
-    ContextTypes,
     filters,
 )
 
@@ -578,10 +577,7 @@ async def logout_command(update, context):
 # SUBSCRIPTION
 # ============================================================
 
-async def subscription_page(
-    update,
-    context,
-):
+async def subscription_page(update, context):
 
     user_id = update.effective_user.id
 
@@ -750,10 +746,7 @@ async def settings_page(update, context):
 # SOURCE CHANNEL
 # ============================================================
 
-async def source_channel_page(
-    update,
-    context,
-):
+async def source_channel_page(update, context):
 
     user_id = update.effective_user.id
 
@@ -1181,10 +1174,19 @@ async def broadcast_command(update, context):
 
             sent += 1
 
+            forwarded_counts[ADMIN_ID] = (
+                forwarded_counts.get(ADMIN_ID, 0) + 1
+            )
+
             await asyncio.sleep(0.05)
 
         except Exception:
+
             failed += 1
+
+            failed_counts[ADMIN_ID] = (
+                failed_counts.get(ADMIN_ID, 0) + 1
+            )
 
     await update.message.reply_text(
         f"✅ Broadcast completed.\n\n"
@@ -1245,7 +1247,7 @@ async def button_handler(update, context):
         )
         return
 
-    # Everything below requires membership
+    # Membership required
     if not await check_membership(
         user_id,
         context,
@@ -1618,9 +1620,6 @@ async def handle_message(update, context):
 
         return
 
-    # Admin plan selection through callback
-    return
-
 
 # ============================================================
 # ADMIN PLAN CALLBACK
@@ -1657,6 +1656,7 @@ async def admin_plan_handler(update, context):
         )
 
         if not target_id:
+
             await query.answer(
                 "❌ Target user missing.",
                 show_alert=True,
@@ -1747,12 +1747,10 @@ async def post_init(application):
 
 
 # ============================================================
-# MAIN
+# APPLICATION
 # ============================================================
 
-def main():
-
-    init_db()
+def build_application():
 
     if not BOT_TOKEN:
         raise RuntimeError(
@@ -1825,7 +1823,7 @@ def main():
 
     application.add_handler(
         CommandHandler(
-        "broadcast",
+            "broadcast",
             broadcast_command,
         )
     )
@@ -1853,6 +1851,19 @@ def main():
         )
     )
 
+    return application
+
+
+# ============================================================
+# ASYNC HEROKU RUNNER
+# ============================================================
+
+async def run_bot():
+
+    init_db()
+
+    application = build_application()
+
     logger.info(
         "========================================"
     )
@@ -1860,16 +1871,95 @@ def main():
         "AdsNova Pro Bot Starting..."
     )
     logger.info(
-        "Safe Mode Enabled"
+        "Python async runner enabled"
+    )
+    logger.info(
+        "Heroku event-loop safe mode enabled"
     )
     logger.info(
         "========================================"
     )
 
-    application.run_polling(
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True,
-    )
+    try:
+
+        # Initialize application
+        await application.initialize()
+
+        # Run post_init manually because we are
+        # not using application.run_polling()
+        await post_init(application)
+
+        # Start application
+        await application.start()
+
+        # Start Telegram polling
+        await application.updater.start_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True,
+        )
+
+        logger.info(
+            "========================================"
+        )
+        logger.info(
+            "AdsNova Pro Bot is ONLINE ✅"
+        )
+        logger.info(
+            "Telegram polling started successfully."
+        )
+        logger.info(
+            "========================================"
+        )
+
+        # Keep worker alive
+        await asyncio.Event().wait()
+
+    except asyncio.CancelledError:
+
+        logger.info(
+            "Bot shutdown requested."
+        )
+
+    except Exception as e:
+
+        logger.exception(
+            "BOT CRASHED: %s",
+            e,
+        )
+
+        raise
+
+    finally:
+
+        logger.info(
+            "Stopping AdsNova Pro Bot..."
+        )
+
+        try:
+
+            if application.updater:
+                await application.updater.stop()
+
+        except Exception:
+            pass
+
+        try:
+
+            await application.stop()
+
+        except Exception:
+            pass
+
+        try:
+
+            await application.shutdown()
+
+        except Exception:
+            pass
+
+        logger.info(
+            "AdsNova Pro Bot stopped."
+        )
 
 
 # ============================================================
@@ -1877,4 +1967,22 @@ def main():
 # ============================================================
 
 if __name__ == "__main__":
-    main()
+
+    try:
+
+        asyncio.run(
+            run_bot()
+        )
+
+    except KeyboardInterrupt:
+
+        logger.info(
+            "Bot stopped by user."
+        )
+
+    except Exception as e:
+
+        logger.exception(
+            "Fatal error: %s",
+            e,
+        )
