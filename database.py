@@ -131,7 +131,7 @@ def get_all_users():
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT user_id, username, first_name, created_at
+        SELECT user_id
         FROM users
         ORDER BY user_id
     """)
@@ -139,7 +139,10 @@ def get_all_users():
     rows = cursor.fetchall()
     conn.close()
 
-    return rows
+    return [
+        row["user_id"]
+        for row in rows
+    ]
 
 
 def get_user(user_id):
