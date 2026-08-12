@@ -1,25 +1,38 @@
 import os
 
+from dotenv import load_dotenv
+
 
 # ============================================================
-# TELEGRAM BOT
+# LOAD ENVIRONMENT VARIABLES
 # ============================================================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+load_dotenv()
+
+
+# ============================================================
+# BOT SETTINGS
+# ============================================================
+
+BOT_TOKEN = os.getenv(
+    "BOT_TOKEN",
+    ""
+).strip()
 
 BOT_USERNAME = os.getenv(
     "BOT_USERNAME",
     ""
-).strip().lstrip("@")
+).strip()
+
 
 # ============================================================
 # TELETHON API
 # ============================================================
 
-try:
-    API_ID = int(os.getenv("API_ID", "0"))
-except (TypeError, ValueError):
-    API_ID = 0
+API_ID_RAW = os.getenv(
+    "API_ID",
+    ""
+).strip()
 
 API_HASH = os.getenv(
     "API_HASH",
@@ -27,19 +40,36 @@ API_HASH = os.getenv(
 ).strip()
 
 
+try:
+    API_ID = int(API_ID_RAW)
+
+except (TypeError, ValueError):
+
+    API_ID = 0
+
+
 # ============================================================
 # ADMIN
 # ============================================================
 
+ADMIN_ID_RAW = os.getenv(
+    "ADMIN_ID",
+    ""
+).strip()
+
+
 try:
-    ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+    ADMIN_ID = int(ADMIN_ID_RAW)
+
 except (TypeError, ValueError):
+
     ADMIN_ID = 0
+
 
 ADMIN_CONTACT_USERNAME = os.getenv(
     "ADMIN_CONTACT_USERNAME",
     ""
-).strip().lstrip("@")
+).strip()
 
 
 # ============================================================
@@ -51,52 +81,34 @@ FORCE_CHANNEL_USERNAME = os.getenv(
     ""
 ).strip()
 
-# @ hata kar username rakhenge
-FORCE_CHANNEL_USERNAME = (
-    FORCE_CHANNEL_USERNAME.lstrip("@")
-)
-
 
 # ============================================================
 # VALIDATION
 # ============================================================
 
-def validate_config():
+if not BOT_TOKEN:
 
-    missing = []
-
-    if not BOT_TOKEN:
-        missing.append("BOT_TOKEN")
-
-    if not BOT_USERNAME:
-        missing.append("BOT_USERNAME")
-
-    if API_ID <= 0:
-        missing.append("API_ID")
-
-    if not API_HASH:
-        missing.append("API_HASH")
-
-    if ADMIN_ID <= 0:
-        missing.append("ADMIN_ID")
-
-    if not ADMIN_CONTACT_USERNAME:
-        missing.append("ADMIN_CONTACT_USERNAME")
-
-    if not FORCE_CHANNEL_USERNAME:
-        missing.append("FORCE_CHANNEL_USERNAME")
-
-    if missing:
-        raise RuntimeError(
-            "Missing/invalid environment variables: "
-            + ", ".join(missing)
-        )
+    print(
+        "⚠️ WARNING: BOT_TOKEN is not configured."
+    )
 
 
-# ============================================================
-# SAFE STARTUP CHECK
-# ============================================================
+if not API_ID:
 
-if __name__ == "__main__":
-    validate_config()
-    print("✅ AdsNova Pro configuration is valid.")
+    print(
+        "⚠️ WARNING: API_ID is not configured."
+    )
+
+
+if not API_HASH:
+
+    print(
+        "⚠️ WARNING: API_HASH is not configured."
+    )
+
+
+if not ADMIN_ID:
+
+    print(
+        "⚠️ WARNING: ADMIN_ID is not configured."
+    )
