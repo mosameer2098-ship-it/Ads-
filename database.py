@@ -125,6 +125,40 @@ def save_user(user):
     conn.close()
 
 
+def get_all_users():
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT user_id, username, first_name, created_at
+        FROM users
+        ORDER BY user_id
+    """)
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    return rows
+
+
+def get_user(user_id):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT user_id, username, first_name, created_at
+        FROM users
+        WHERE user_id = ?
+    """, (user_id,))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    return row
+
+
 # ============================================================
 # PREMIUM
 # ============================================================
@@ -147,7 +181,6 @@ def is_premium(user_id):
         return False
 
     try:
-
         expiry = datetime.strptime(
             row["expiry_date"],
             "%Y-%m-%d %H:%M:%S"
@@ -197,7 +230,6 @@ def get_remaining_days(user_id):
         return "Expired"
 
     try:
-
         expiry = datetime.strptime(
             row["expiry_date"],
             "%Y-%m-%d %H:%M:%S"
@@ -239,7 +271,6 @@ def add_premium_subscription(
     if row:
 
         try:
-
             old_expiry = datetime.strptime(
                 row["expiry_date"],
                 "%Y-%m-%d %H:%M:%S"
@@ -251,11 +282,9 @@ def add_premium_subscription(
                 start_date = now
 
         except Exception:
-
             start_date = now
 
     else:
-
         start_date = now
 
     expiry = start_date + timedelta(days=days)
@@ -307,7 +336,6 @@ def get_bot_config(user_id):
     conn.close()
 
     if row:
-
         return (
             row["source_channel"],
             row["time_interval"] or 30
@@ -387,10 +415,7 @@ def get_user_groups(user_id):
     ]
 
 
-def toggle_group_selection(
-    user_id,
-    group_id
-):
+def toggle_group_selection(user_id, group_id):
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -426,10 +451,7 @@ def toggle_group_selection(
     conn.close()
 
 
-def set_all_groups_selection(
-    user_id,
-    value
-):
+def set_all_groups_selection(user_id, value):
 
     value = 1 if value else 0
 
@@ -505,7 +527,6 @@ def get_active_slot(user_id):
         slot = 1
 
     else:
-
         slot = row["slot_number"]
 
     conn.commit()
@@ -514,10 +535,7 @@ def get_active_slot(user_id):
     return slot
 
 
-def set_active_slot(
-    user_id,
-    slot_number
-):
+def set_active_slot(user_id, slot_number):
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -539,10 +557,7 @@ def set_active_slot(
 # SLOT SESSION
 # ============================================================
 
-def get_slot_session(
-    user_id,
-    slot_number
-):
+def get_slot_session(user_id, slot_number):
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -639,10 +654,7 @@ def save_user_session(
     conn.close()
 
 
-def remove_user_session(
-    user_id,
-    slot_number
-):
+def remove_user_session(user_id, slot_number):
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -697,7 +709,6 @@ def save_real_groups_and_channels(
     conn = get_connection()
     cursor = conn.cursor()
 
-    # Existing selected groups preserve karna
     old_selected = {}
 
     cursor.execute("""
@@ -732,7 +743,6 @@ def save_real_groups_and_channels(
             selected
         ))
 
-    # Channels refresh
     cursor.execute("""
         DELETE FROM channels
         WHERE user_id = ?
@@ -776,6 +786,26 @@ def get_custom_share_message(user_id):
         return row["custom_share_message"]
 
     return "🚀 AdsNova Pro"
+
+
+def set_custom_share_message(user_id, message):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO user_settings
+        (user_id, custom_share_message)
+        VALUES (?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            custom_share_message = excluded.custom_share_message
+    """, (
+        user_id,
+        message
+    ))
+
+    conn.commit()
+    conn.close()
 
 
 # ============================================================
