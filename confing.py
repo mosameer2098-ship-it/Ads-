@@ -1,8 +1,25 @@
-API_ID = "YOUR_API_ID"
-API_HASH = "YOUR_API_HASH"
-ADMIN_ID = "YOUR_ADMIN_ID"
-BOT_TOKEN = "YOUR_BOT_TOKEN"
+# ============================================================
+# ADSNOVA PRO - CONFIG
+# ============================================================
 
-BOT_USERNAME = "Automatic_posttbot"
-FORCE_CHANNEL_USERNAME = "@iqra_music_support"
+# Telegram Bot Token
+BOT_TOKEN = "YAHAN_APNA_BOT_TOKEN_DALO"
+
+# Telegram API ID
+API_ID = 12345678
+
+# Telegram API Hash
+API_HASH = "YAHAN_APNA_API_HASH_DALO"
+
+# Admin Telegram User ID
+ADMIN_ID = 123456789
+
+# Bot username WITHOUT @
+BOT_USERNAME = "YourBotUsername"
+
+# Force Join Channel username
+# @ lagana optional hai
+FORCE_CHANNEL_USERNAME = "@YourChannel"
+
+# Admin contact username WITHOUT @
 ADMIN_CONTACT_USERNAME = "AdsNova0"
