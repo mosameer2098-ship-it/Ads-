@@ -1,37 +1,29 @@
-import os
 import asyncio
 import logging
-import random
+import sqlite3
 from datetime import datetime, timedelta
 
 from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    BotCommand
+    BotCommand,
 )
-
 from telegram.ext import (
     ApplicationBuilder,
-    ContextTypes,
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
-    filters
+    ContextTypes,
+    filters,
 )
 
-from telethon import TelegramClient
-from telethon.sessions import StringSession
-from telethon.tl.functions.account import UpdateProfileRequest
-
 from config import (
-    API_ID,
-    API_HASH,
     ADMIN_ID,
     BOT_TOKEN,
     BOT_USERNAME,
     FORCE_CHANNEL_USERNAME,
-    ADMIN_CONTACT_USERNAME
+    ADMIN_CONTACT_USERNAME,
 )
 
 from database import (
@@ -48,18 +40,14 @@ from database import (
     get_user_channels,
     get_remaining_days,
     get_active_slot,
-    set_active_slot,
     get_slot_session,
-    get_user_sessions,
-    remove_user_session,
+    set_active_slot,
     set_slot_stopped,
     add_premium_subscription,
     remove_premium_subscription,
     get_custom_share_message,
     check_referral_eligibility,
     claim_referral_reward,
-    save_user_session,
-    save_real_groups_and_channels
 )
 
 
@@ -69,7 +57,7 @@ from database import (
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+    level=logging.INFO,
 )
 
 logger = logging.getLogger(__name__)
@@ -79,319 +67,65 @@ logger = logging.getLogger(__name__)
 # GLOBAL STATES
 # ============================================================
 
-user_login_state = {}
+user_languages = {}
 admin_sub_target = {}
 forwarded_counts = {}
 failed_counts = {}
-user_languages = {}
 
 
 # ============================================================
-# ACCOUNT BIO
+# HELPERS
 # ============================================================
 
-async def update_account_bio(client):
-    try:
-        bio_text = f"Bot: https://t.me/{BOT_USERNAME}"[:70]
-        await client(UpdateProfileRequest(about=bio_text))
-    except Exception as e:
-        logger.error(f"Bio update error: {e}")
+def is_admin(user_id):
+    return user_id == ADMIN_ID
 
 
-# ============================================================
-# EXPIRY REMINDER WORKER
-# ============================================================
+def has_access(user_id):
+    return is_admin(user_id) or is_premium(user_id)
 
-async def expiry_reminder_worker(application):
 
-    await asyncio.sleep(10)
+def bot_url():
+    return f"https://t.me/{BOT_USERNAME}"
 
-    while True:
-        try:
-            import sqlite3
 
-            conn = sqlite3.connect("bot_database.db")
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+def admin_url():
+    username = ADMIN_CONTACT_USERNAME.replace("@", "")
+    return f"https://t.me/{username}"
 
-            tomorrow = (
-                datetime.now() + timedelta(days=1)
-            ).strftime("%Y-%m-%d")
 
-            cursor.execute(
-                """
-                SELECT user_id, expiry_date
-                FROM subscriptions
-                WHERE expiry_date LIKE ?
-                """,
-                (f"{tomorrow}%",)
-            )
+async def check_membership(user_id, context):
 
-            expiring_users = cursor.fetchall()
-            conn.close()
-
-            for row in expiring_users:
-                user_id = row["user_id"]
-
-                try:
-                    await application.bot.send_message(
-                        chat_id=user_id,
-                        text=(
-                            "⚠️ **Alert:** Aapka AdsNova Pro "
-                            "subscription **kal khatam hone wala hai!**\n\n"
-                            "Plan ko uninterrupted chalane ke liye "
-                            "jaldi renew karein:\n"
-                            "🛒 Contact Admin: @AdsNova0"
-                        ),
-                        parse_mode="Markdown"
-                    )
-
-                    await asyncio.sleep(1)
-
-                except Exception:
-                    pass
-
-            await asyncio.sleep(43200)
-
-        except Exception as e:
-            logger.error(f"Expiry reminder worker error: {e}")
-            await asyncio.sleep(3600)
-
-
-# ============================================================
-# BACKGROUND FORWARDER
-# ============================================================
-
-async def background_forwarder(application):
-
-    await asyncio.sleep(5)
-
-    while True:
-        try:
-            import sqlite3
-
-            conn = sqlite3.connect("bot_database.db")
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-
-            cursor.execute(
-                """
-                SELECT user_id, slot_number, session_string
-                FROM user_sessions
-                WHERE is_stopped = 0
-                """
-            )
-
-            active_sessions = cursor.fetchall()
-            conn.close()
-
-            for session_row in active_sessions:
-
-                user_id = session_row["user_id"]
-                slot_num = session_row["slot_number"]
-                session_str = session_row["session_string"]
-
-                if user_id != ADMIN_ID and not is_premium(user_id):
-                    continue
-
-                config = get_bot_config(user_id)
-
-                source_chan_name = config[0]
-                interval = config[1] if config[1] else 30
-
-                if not source_chan_name:
-                    continue
-
-                groups = get_user_groups(user_id)
-
-                selected_groups = [
-                    g[0]
-                    for g in groups
-                    if g[2] == 1
-                ]
-
-                if not selected_groups:
-                    continue
-
-                try:
-
-                    client = TelegramClient(
-                        StringSession(session_str),
-                        API_ID,
-                        API_HASH
-                    )
-
-                    await client.connect()
-
-                    if not await client.is_user_authorized():
-                        await client.disconnect()
-                        continue
-
-                    source_entity = None
-
-                    channels = get_user_channels(user_id)
-                    target_channel_id = None
-
-                    for cid, cname in channels:
-                        if (
-                            cname.strip().lower()
-                            == source_chan_name.strip().lower()
-                        ):
-                            target_channel_id = cid
-                            break
-
-                    if target_channel_id:
-
-                        try:
-                            source_entity = await client.get_entity(
-                                int(target_channel_id)
-                            )
-                        except Exception:
-                            pass
-
-                    if not source_entity:
-
-                        async for dialog in client.iter_dialogs(
-                            limit=100
-                        ):
-
-                            if (
-                                dialog.title.strip().lower()
-                                == source_chan_name.strip().lower()
-                                or str(dialog.id)
-                                == str(source_chan_name)
-                            ):
-                                source_entity = dialog.entity
-                                break
-
-                    if source_entity:
-
-                        messages = await client.get_messages(
-                            source_entity,
-                            limit=1
-                        )
-
-                        if messages:
-
-                            latest_msg = messages[0]
-
-                            for grp_id in selected_groups:
-
-                                try:
-
-                                    if latest_msg.media:
-
-                                        await client.send_file(
-                                            int(grp_id),
-                                            latest_msg.media,
-                                            caption=latest_msg.text
-                                        )
-
-                                    elif latest_msg.text:
-
-                                        await client.send_message(
-                                            int(grp_id),
-                                            latest_msg.text
-                                        )
-
-                                    forwarded_counts[user_id] = (
-                                        forwarded_counts.get(user_id, 0) + 1
-                                    )
-
-                                    await asyncio.sleep(
-                                        random.randint(3, 7)
-                                    )
-
-                                except Exception as f_err:
-
-                                    failed_counts[user_id] = (
-                                        failed_counts.get(user_id, 0) + 1
-                                    )
-
-                                    logger.error(
-                                        f"Send error to group "
-                                        f"{grp_id}: {f_err}"
-                                    )
-
-                    await client.disconnect()
-
-                except Exception as e:
-
-                    logger.error(
-                        f"Forwarder client error "
-                        f"for user {user_id}: {e}"
-                    )
-
-                await asyncio.sleep(
-                    interval + random.randint(1, 5)
-                )
-
-        except Exception as err:
-
-            logger.error(
-                f"Background worker loop error: {err}"
-            )
-
-            await asyncio.sleep(10)
-
-
-# ============================================================
-# CHANNEL MEMBERSHIP
-# ============================================================
-
-async def check_channel_membership(
-    user_id,
-    context
-):
-
-    if user_id == ADMIN_ID:
+    if is_admin(user_id):
         return True
 
     try:
-
         member = await context.bot.get_chat_member(
             chat_id=FORCE_CHANNEL_USERNAME,
-            user_id=user_id
+            user_id=user_id,
         )
 
-        if member.status in [
+        return member.status in (
             "member",
             "administrator",
-            "creator"
-        ]:
-            return True
+            "creator",
+        )
 
-    except Exception:
-        pass
-
-    return False
-
-
-# ============================================================
-# USER ACCESS
-# ============================================================
-
-def check_user_access(user_id):
-
-    if user_id == ADMIN_ID:
-        return True
-
-    return is_premium(user_id)
+    except Exception as e:
+        logger.warning(
+            "Membership check failed for %s: %s",
+            user_id,
+            e,
+        )
+        return False
 
 
-# ============================================================
-# SUBSCRIPTION LABEL
-# ============================================================
+def subscription_label(user_id):
 
-def get_subscription_type_label(user_id):
-
-    if user_id == ADMIN_ID:
+    if is_admin(user_id):
         return "Lifetime (Admin) ♾️"
 
     try:
-
-        import sqlite3
-
         conn = sqlite3.connect("bot_database.db")
         cursor = conn.cursor()
 
@@ -406,202 +140,179 @@ def get_subscription_type_label(user_id):
                 user_id,
                 datetime.now().strftime(
                     "%Y-%m-%d %H:%M:%S"
-                )
-            )
+                ),
+            ),
         )
 
         row = cursor.fetchone()
         conn.close()
 
         if row:
-
-            p_type = row[0]
-
-            if p_type in ["referral", "trial"]:
+            if row[0] in ("referral", "trial"):
                 return "Free Referral Trial 🎁"
 
-            if p_type == "paid":
-                return "Paid Premium 💎"
+            return "Paid Premium 💎"
 
     except Exception:
         pass
 
-    return "Paid Premium 💎"
+    return "Inactive ❌"
+
+
+# ============================================================
+# JOIN REQUIRED SCREEN
+# ============================================================
+
+async def show_join_required(update, context):
+
+    text = (
+        "🚨 **Channel Join Required!** 🚨\n\n"
+        "AdsNova Pro use karne ke liye pehle "
+        "hamara channel join karein.\n\n"
+        "Join karne ke baad **Check Membership** "
+        "button dabayein."
+    )
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "📢 Join Channel",
+                url=(
+                    f"https://t.me/"
+                    f"{FORCE_CHANNEL_USERNAME.replace('@', '')}"
+                ),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔄 Check Membership",
+                callback_data="check_membership",
+            )
+        ],
+    ])
+
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=keyboard,
+        )
+    else:
+        await update.message.reply_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=keyboard,
+        )
+
+
+# ============================================================
+# ACCESS DENIED
+# ============================================================
+
+async def show_subscription_required(update, context):
+
+    text = (
+        "❌ **Premium Subscription Required**\n\n"
+        "Aapka AdsNova Pro subscription active nahi hai.\n\n"
+        "Plan purchase karne ke liye Admin se contact karein."
+    )
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "🛒 Contact Admin",
+                url=admin_url(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔙 Back to Menu",
+                callback_data="main_menu",
+            )
+        ],
+    ])
+
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=keyboard,
+        )
+    else:
+        await update.message.reply_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=keyboard,
+        )
 
 
 # ============================================================
 # MAIN KEYBOARD
 # ============================================================
 
-async def get_main_keyboard(user_id):
+def main_keyboard(user_id):
 
-    active_slot = get_active_slot(user_id)
+    lang = user_languages.get(user_id, "hi")
 
-    slot_info = get_slot_session(
-        user_id,
-        active_slot
-    )
-
-    is_stopped = (
-        slot_info[3]
-        if slot_info
-        else 0
-    )
-
-    lang = user_languages.get(
-        user_id,
-        "hi"
-    )
-
-    keyboard = []
-
-    if slot_info:
-
-        if is_stopped:
-
-            btn_text = (
-                f"🟢 Start Slot {active_slot}"
-                if lang == "en"
-                else f"🟢 Slot {active_slot} Shuru Karein"
-            )
-
-            keyboard.append([
-                InlineKeyboardButton(
-                    btn_text,
-                    callback_data=f"start_slot_{active_slot}"
-                ),
-                InlineKeyboardButton(
-                    "🚪 Logout",
-                    callback_data="logout_acc"
-                )
-            ])
-
-        else:
-
-            btn_text = (
-                f"🛑 Stop Slot {active_slot}"
-                if lang == "en"
-                else f"🛑 Slot {active_slot} Rokein"
-            )
-
-            keyboard.append([
-                InlineKeyboardButton(
-                    btn_text,
-                    callback_data=f"stop_slot_{active_slot}"
-                ),
-                InlineKeyboardButton(
-                    "🚪 Logout",
-                    callback_data="logout_acc"
-                )
-            ])
-
-    else:
-
-        btn_text = (
-            f"🔑 Login Slot {active_slot}"
-            if lang == "en"
-            else f"🔑 Slot {active_slot} Login Karein"
-        )
-
-        keyboard.append([
+    keyboard = [
+        [
             InlineKeyboardButton(
-                btn_text,
-                callback_data=f"slot_click_{active_slot}"
+                "📊 Live Analytics Status",
+                callback_data="status",
+            ),
+            InlineKeyboardButton(
+                "⚙️ Settings",
+                callback_data="settings",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "💎 Subscription Details",
+                callback_data="subscription",
             )
-        ])
-
-    keyboard.append([
-        InlineKeyboardButton(
-            "📊 Live Analytics Status",
-            callback_data="status"
-        ),
-        InlineKeyboardButton(
-            "⚙️ Settings",
-            callback_data="settings"
-        )
-    ])
-
-    keyboard.append([
-        InlineKeyboardButton(
-            "💎 Subscription Details",
-            callback_data="subscription"
-        )
-    ])
-
-    keyboard.append([
-        InlineKeyboardButton(
-            "🎁 Free Trial (Referral)",
-            callback_data="referral_info"
-        )
-    ])
-
-    keyboard.append([
-        InlineKeyboardButton(
-            f"🌐 Language: "
-            f"{'English' if lang == 'en' else 'Hinglish'}",
-            callback_data="toggle_lang"
-        )
-    ])
-
-    keyboard.append([
-        InlineKeyboardButton(
-            "✨ Refresh",
-            callback_data="refresh"
-        ),
-        InlineKeyboardButton(
-            "🛠️ Help Centre",
-            callback_data="help_centre"
-        )
-    ])
+        ],
+        [
+            InlineKeyboardButton(
+                "🎁 Free Trial (Referral)",
+                callback_data="referral_info",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                (
+                    "🌐 Language: English"
+                    if lang == "en"
+                    else "🌐 Language: Hinglish"
+                ),
+                callback_data="toggle_lang",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "✨ Refresh",
+                callback_data="refresh",
+            ),
+            InlineKeyboardButton(
+                "🛠️ Help Centre",
+                callback_data="help_centre",
+            ),
+        ],
+    ]
 
     return InlineKeyboardMarkup(keyboard)
 
 
 # ============================================================
-# BOT COMMANDS
+# START
 # ============================================================
 
-async def set_bot_commands(application):
-
-    commands = [
-        BotCommand(
-            "start",
-            "Start AdsNova Pro Bot 🚀"
-        ),
-        BotCommand(
-            "menu",
-            "Open main menu 📋"
-        ),
-        BotCommand(
-            "status",
-            "Check posting status 📊"
-        ),
-        BotCommand(
-            "stop",
-            "Stop ad posting ⏹️"
-        ),
-        BotCommand(
-            "logout",
-            "Logout from account 🚪"
-        ),
-    ]
-
-    await application.bot.set_my_commands(commands)
-
-
-# ============================================================
-# START COMMAND
-# ============================================================
-
-async def start(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def start(update, context):
 
     user = update.effective_user
 
     save_user(user)
 
+    # Referral
     if context.args:
 
         arg = context.args[0]
@@ -609,7 +320,6 @@ async def start(
         if arg.startswith("ref_"):
 
             try:
-
                 referrer_id = int(
                     arg.split("_")[1]
                 )
@@ -620,107 +330,56 @@ async def start(
                         user.id
                     )
                 ):
-
-                    claim_referral_reward(
-                        user.id
-                    )
-
-                    try:
+                    if claim_referral_reward(user.id):
 
                         await context.bot.send_message(
-                            chat_id=user.id,
-                            text=(
-                                "🎁 **Badhai ho!** "
-                                "Referral link se join karne par "
-                                "aapko **2 din ka Free Trial** mil gaya hai!"
+                            user.id,
+                            (
+                                "🎁 **Badhai ho!**\n\n"
+                                "Aapko referral se "
+                                "**2 din ka Free Trial** mil gaya!"
                             ),
-                            parse_mode="Markdown"
+                            parse_mode="Markdown",
                         )
 
-                    except Exception:
-                        pass
+            except Exception as e:
+                logger.warning(
+                    "Referral error: %s",
+                    e,
+                )
 
-            except Exception:
-                pass
-
-    is_joined = await check_channel_membership(
+    if not await check_membership(
         user.id,
-        context
-    )
-
-    if not is_joined:
-
-        join_text = (
-            "🚨 **Channel Join Required!** 🚨\n\n"
-            "Bot ko use karne ke liye channel join karna "
-            "zaroori hai. Join karne ke baad niche button "
-            "par click karein:"
+        context,
+    ):
+        await show_join_required(
+            update,
+            context,
         )
-
-        keyboard = [
-            [
-                InlineKeyboardButton(
-                    "📢 Join Channel",
-                    url=(
-                        f"https://t.me/"
-                        f"{FORCE_CHANNEL_USERNAME.replace('@', '')}"
-                    )
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🔄 Check Membership",
-                    callback_data="check_membership"
-                )
-            ]
-        ]
-
-        reply_markup = InlineKeyboardMarkup(
-            keyboard
-        )
-
-        if update.callback_query:
-
-            await update.callback_query.edit_message_text(
-                join_text,
-                parse_mode="Markdown",
-                reply_markup=reply_markup
-            )
-
-        else:
-
-            await update.message.reply_text(
-                join_text,
-                parse_mode="Markdown",
-                reply_markup=reply_markup
-            )
-
         return
 
-    welcome_text = (
-        "💎 **AdsNova Pro Bot - Main Menu** 💎\n\n"
-        "✨ Premium Automation Service - Fast & Reliable\n"
-        "⚡ Random Intervals for natural posting\n"
-        "🛡️ Your profile stays clean & unchanged\n\n"
-        "👇 Choose an option below:"
+    text = (
+        "💎 **AdsNova Pro Bot** 💎\n\n"
+        "✨ Premium Automation Service\n"
+        "⚡ Fast & Reliable Configuration\n"
+        "📊 Live Analytics\n"
+        "🎁 Referral Trial System\n\n"
+        "👇 **Main Menu:**"
     )
 
-    kb = await get_main_keyboard(user.id)
+    keyboard = main_keyboard(user.id)
 
     if update.callback_query:
-
         await update.callback_query.edit_message_text(
-            welcome_text,
+            text,
             parse_mode="Markdown",
-            reply_markup=kb
+            reply_markup=keyboard,
         )
-
     else:
-
         await update.message.reply_text(
-            welcome_text,
+            text,
             parse_mode="Markdown",
-            reply_markup=kb
+            reply_markup=keyboard,
         )
 
 
@@ -728,320 +387,126 @@ async def start(
 # STATUS
 # ============================================================
 
-async def status_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def status_command(update, context):
 
     user_id = update.effective_user.id
 
-    if not await check_channel_membership(
+    if not await check_membership(
         user_id,
-        context
+        context,
     ):
-
-        query = update.callback_query
-
-        join_msg = (
-            "❌ Aapne channel leave kar diya hai! "
-            "Pehle join karein."
+        await show_join_required(
+            update,
+            context,
         )
-
-        kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton(
-                    "📢 Join Channel",
-                    url=(
-                        f"https://t.me/"
-                        f"{FORCE_CHANNEL_USERNAME.replace('@', '')}"
-                    )
-                ),
-                InlineKeyboardButton(
-                    "🔄 Check",
-                    callback_data="check_membership"
-                )
-            ]
-        ])
-
-        if query:
-            await query.edit_message_text(
-                join_msg,
-                reply_markup=kb
-            )
-        else:
-            await update.message.reply_text(
-                join_msg,
-                reply_markup=kb
-            )
-
         return
 
-    if not check_user_access(user_id):
+    if not has_access(user_id):
 
-        text = (
-            "❌ **Access Denied!**\n"
-            "Aapka subscription active nahi hai."
+        await show_subscription_required(
+            update,
+            context,
         )
-
-        kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton(
-                    "🛒 Buy Subscription "
-                    "(Contact Admin)",
-                    url=(
-                        f"https://t.me/"
-                        f"{ADMIN_CONTACT_USERNAME}"
-                    )
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🔙 Back to Menu",
-                    callback_data="main_menu"
-                )
-            ]
-        ])
-
-        if update.callback_query:
-
-            await update.callback_query.edit_message_text(
-                text,
-                parse_mode="Markdown",
-                reply_markup=kb
-            )
-
-        else:
-
-            await update.message.reply_text(
-                text,
-                parse_mode="Markdown",
-                reply_markup=kb
-            )
-
-        return
-
-    if user_id == ADMIN_ID:
-
-        try:
-
-            import sqlite3
-
-            conn = sqlite3.connect(
-                "bot_database.db"
-            )
-
-            cursor = conn.cursor()
-
-            cursor.execute(
-                "SELECT COUNT(*) FROM users"
-            )
-
-            total_users = cursor.fetchone()[0]
-
-            try:
-
-                cursor.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM subscriptions
-                    WHERE expiry_date > ?
-                    """,
-                    (
-                        datetime.now().strftime(
-                            "%Y-%m-%d %H:%M:%S"
-                        ),
-                    )
-                )
-
-                prem_users = cursor.fetchone()[0]
-
-            except Exception:
-
-                prem_users = 0
-
-            try:
-
-                cursor.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM user_sessions
-                    WHERE is_stopped = 0
-                    """
-                )
-
-                active_ids = cursor.fetchone()[0]
-
-            except Exception:
-
-                active_ids = 0
-
-            conn.close()
-
-        except Exception:
-
-            total_users = "N/A"
-            prem_users = "N/A"
-            active_ids = "N/A"
-
-        admin_text = (
-            "👑 **Admin Dashboard** 👑\n\n"
-            f"👥 Total Users: {total_users}\n"
-            f"💎 Premium Users: {prem_users}\n"
-            f"🚀 Currently Active IDs: {active_ids}\n\n"
-            "👇 Quick Manage Subscriptions:"
-        )
-
-        reply_markup = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton(
-                    "💎 Manage Subscriptions (Plans)",
-                    callback_data="admin_manage_sub"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "📊 View User Stats",
-                    callback_data="admin_user_stats"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🔙 Back to Menu",
-                    callback_data="main_menu"
-                )
-            ]
-        ])
-
-        if update.callback_query:
-
-            await update.callback_query.edit_message_text(
-                admin_text,
-                parse_mode="Markdown",
-                reply_markup=reply_markup
-            )
-
-        else:
-
-            await update.message.reply_text(
-                admin_text,
-                parse_mode="Markdown",
-                reply_markup=reply_markup
-            )
-
         return
 
     config = get_bot_config(user_id)
 
-    chan = (
+    source = (
         config[0]
         if config and config[0]
-        else "Auto-Detect (Active)"
+        else "Not Set"
     )
 
-    t_int = (
+    interval = (
         config[1]
-        if config
+        if config and config[1]
         else 30
     )
 
     active_slot = get_active_slot(user_id)
 
-    slot_data = get_slot_session(
+    slot = get_slot_session(
         user_id,
-        active_slot
+        active_slot,
     )
 
-    login_status = (
-        "Logged In"
-        if slot_data
-        else "Not Logged In"
-    )
-
-    acc_name = (
-        slot_data[2]
-        if slot_data
-        else "N/A"
-    )
-
-    is_stopped = (
-        slot_data[3]
-        if slot_data
-        else 0
-    )
+    if slot:
+        account_status = "Configured ✅"
+        account_name = slot[2] or "N/A"
+        stopped = slot[3]
+    else:
+        account_status = "Not Configured"
+        account_name = "N/A"
+        stopped = 1
 
     forwarding_status = (
-        "Stopped"
-        if is_stopped
-        else "Active (Running)"
-    )
-
-    sub_type_label = get_subscription_type_label(
-        user_id
+        "Stopped 🛑"
+        if stopped
+        else "Active 🟢"
     )
 
     groups = get_user_groups(user_id)
 
-    sel_groups = sum(
+    selected = sum(
         1
-        for g in groups
-        if g[2] == 1
+        for group in groups
+        if group[2] == 1
     )
 
-    success_count = forwarded_counts.get(
+    sent = forwarded_counts.get(
         user_id,
-        0
+        0,
     )
 
-    failed_count = failed_counts.get(
+    failed = failed_counts.get(
         user_id,
-        0
+        0,
     )
 
-    status_text = (
-        "📊 **AdsNova Pro - Live Analytics Dashboard**\n\n"
+    sub_label = subscription_label(user_id)
+
+    if is_admin(user_id):
+        expiry = "Unlimited"
+    else:
+        expiry = get_user_expiry(user_id)
+
+    text = (
+        "📊 **AdsNova Pro - Live Analytics**\n\n"
         f"🆔 User ID: `{user_id}`\n"
-        f"📂 Active Account Slot: Slot {active_slot}\n"
-        f"🔐 Login Status: {login_status}\n"
-        f"🌟 Subscription: Active ✅ ({sub_type_label})\n\n"
+        f"📂 Active Slot: {active_slot}\n"
+        f"🔐 Account Status: {account_status}\n"
+        f"🏷️ Account Name: {account_name}\n\n"
+        f"💎 Subscription: {sub_label}\n"
+        f"⏳ Expiry: `{expiry}`\n\n"
         f"🚀 Forwarding Status: {forwarding_status}\n"
-        f"📢 Source Channel: {chan}\n"
-        f"👥 Target Groups: {sel_groups} groups selected\n"
-        f"⏱️ Posting Interval: {t_int} seconds\n\n"
-        "📈 **Live Performance Analytics:**\n"
-        f"  • Successfully Sent: `⚡ {success_count}` messages\n"
-        f"  • Errors/Failed: `⚠️ {failed_count}` messages\n\n"
-        "👤 **Logged-in Account Details**\n"
-        "📌 Account Status: Connected ✅\n"
-        f"🏷️ Name: {acc_name}"
+        f"📢 Source Channel: {source}\n"
+        f"👥 Selected Groups: {selected}\n"
+        f"⏱️ Interval: {interval} seconds\n\n"
+        "📈 **Performance**\n"
+        f"⚡ Successfully Sent: `{sent}`\n"
+        f"⚠️ Failed: `{failed}`"
     )
 
-    reply_markup = InlineKeyboardMarkup([
+    keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton(
-                f"🛑 Stop Slot {active_slot}",
-                callback_data=f"stop_slot_{active_slot}"
-            ),
-            InlineKeyboardButton(
                 "🔙 Back to Menu",
-                callback_data="main_menu"
+                callback_data="main_menu",
             )
         ]
     ])
 
     if update.callback_query:
-
         await update.callback_query.edit_message_text(
-            status_text,
+            text,
             parse_mode="Markdown",
-            reply_markup=reply_markup
+            reply_markup=keyboard,
         )
-
     else:
-
         await update.message.reply_text(
-            status_text,
+            text,
             parse_mode="Markdown",
-            reply_markup=reply_markup
+            reply_markup=keyboard,
         )
 
 
@@ -1049,32 +514,38 @@ async def status_command(
 # STOP
 # ============================================================
 
-async def stop_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def stop_command(update, context):
 
     user_id = update.effective_user.id
 
-    if not await check_channel_membership(
+    if not await check_membership(
         user_id,
-        context
+        context,
     ):
         return
 
-    if not check_user_access(user_id):
+    if not has_access(user_id):
         return
 
-    active_slot = get_active_slot(user_id)
+    slot = get_active_slot(user_id)
+
+    if not get_slot_session(
+        user_id,
+        slot,
+    ):
+        await update.message.reply_text(
+            "ℹ️ Abhi koi configured account slot nahi hai."
+        )
+        return
 
     set_slot_stopped(
         user_id,
-        active_slot,
-        1
+        slot,
+        1,
     )
 
     await update.message.reply_text(
-        f"🛑 Slot {active_slot} stopped successfully."
+        f"🛑 Slot {slot} stopped successfully."
     )
 
 
@@ -1082,77 +553,436 @@ async def stop_command(
 # LOGOUT
 # ============================================================
 
-async def logout_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
+async def logout_command(update, context):
+
+    user_id = update.effective_user.id
+
+    if not await check_membership(
+        user_id,
+        context,
+    ):
+        return
+
+    if not has_access(user_id):
+        return
+
+    await update.message.reply_text(
+        "ℹ️ Account login/logout ko is safe version "
+        "me bot ke through handle nahi kiya jata.\n\n"
+        "Aap Settings me apna forwarding configuration "
+        "manage kar sakte hain."
+    )
+
+
+# ============================================================
+# SUBSCRIPTION
+# ============================================================
+
+async def subscription_page(
+    update,
+    context,
 ):
 
     user_id = update.effective_user.id
 
-    if not await check_channel_membership(
-        user_id,
-        context
-    ):
-        return
+    if is_admin(user_id):
 
-    if not check_user_access(user_id):
-        return
+        text = (
+            "💎 **Subscription Details**\n\n"
+            "🌟 Status: Active ✅\n"
+            "🏷️ Type: Lifetime (Admin) ♾️\n"
+            "⏳ Expiry: Unlimited"
+        )
 
-    active_slot = get_active_slot(user_id)
+    elif is_premium(user_id):
 
-    remove_user_session(
-        user_id,
-        active_slot
-    )
+        expiry = get_user_expiry(user_id)
+        remaining = get_remaining_days(user_id)
+        label = subscription_label(user_id)
 
-    await update.message.reply_text(
-        f"🚪 Slot {active_slot} logged out successfully."
-    )
+        text = (
+            "💎 **Subscription Details**\n\n"
+            "🌟 Status: Active ✅\n"
+            f"🏷️ Type: {label}\n"
+            f"⏳ Expiry: `{expiry}`\n"
+            f"⏱️ Remaining: `{remaining}`"
+        )
 
+    else:
 
-# ============================================================
-# ADMIN
-# ============================================================
+        text = (
+            "💎 **AdsNova Pro Pricing**\n\n"
+            "❌ Status: Inactive\n\n"
+            "📦 **Available Plans:**\n\n"
+            "💎 ₹399 — 1 Month\n"
+            "💎 ₹799 — 3 Months\n"
+            "💎 ₹1999 — 6 Months\n\n"
+            "Purchase ke liye Admin se contact karein."
+        )
 
-async def admin_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+    keyboard = []
 
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    admin_text = (
-        "👑 **Admin Control Panel** 👑\n\n"
-        "Aap niche diye gaye button se direct plans "
-        "manage kar sakte hain ya stats dekh sakte hain:"
-    )
-
-    reply_markup = InlineKeyboardMarkup([
-        [
+    if not is_admin(user_id) and not is_premium(user_id):
+        keyboard.append([
             InlineKeyboardButton(
-                "💎 Manage Subscriptions (Plans)",
-                callback_data="admin_manage_sub"
+                "🛒 Contact Admin",
+                url=admin_url(),
             )
-        ],
+        ])
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "🔙 Back to Menu",
+            callback_data="main_menu",
+        )
+    ])
+
+    markup = InlineKeyboardMarkup(keyboard)
+
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=markup,
+        )
+
+
+# ============================================================
+# REFERRAL
+# ============================================================
+
+async def referral_page(update, context):
+
+    user_id = update.effective_user.id
+
+    link = (
+        f"https://t.me/{BOT_USERNAME}"
+        f"?start=ref_{user_id}"
+    )
+
+    share_text = (
+        "🎁 AdsNova Pro ko 2 din free test karo!\n"
+        f"{link}"
+    )
+
+    share_url = (
+        "https://t.me/share/url?"
+        f"url={link}&text={share_text}"
+    )
+
+    text = (
+        "🎁 **Referral & Free Trial**\n\n"
+        "Apna unique referral link share karein:\n\n"
+        f"`{link}`\n\n"
+        "🎁 Referral se join karne wale user ko "
+        "**2 din ka Free Trial** mil sakta hai."
+    )
+
+    keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton(
-                "📊 View User Stats",
-                callback_data="admin_user_stats"
+                "🚀 Share Link",
+                url=share_url,
             )
         ],
         [
             InlineKeyboardButton(
                 "🔙 Back to Menu",
-                callback_data="main_menu"
+                callback_data="main_menu",
             )
-        ]
+        ],
+    ])
+
+    await update.callback_query.edit_message_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=keyboard,
+    )
+
+
+# ============================================================
+# SETTINGS
+# ============================================================
+
+async def settings_page(update, context):
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "📢 Source Channel",
+                callback_data="opt_1",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "👥 Target Groups",
+                callback_data="opt_2",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "⏱️ Time Interval",
+                callback_data="opt_3",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "💬 Share Message",
+                callback_data="opt_4",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔙 Back to Menu",
+                callback_data="main_menu",
+            )
+        ],
+    ])
+
+    await update.callback_query.edit_message_text(
+        "⚙️ **AdsNova Pro Settings**",
+        parse_mode="Markdown",
+        reply_markup=keyboard,
+    )
+
+
+# ============================================================
+# SOURCE CHANNEL
+# ============================================================
+
+async def source_channel_page(
+    update,
+    context,
+):
+
+    user_id = update.effective_user.id
+
+    channels = get_user_channels(user_id)
+
+    if not channels:
+
+        await update.callback_query.edit_message_text(
+            "❌ Database me koi channel available nahi hai.\n\n"
+            "Pehle apne authorized Telegram integration "
+            "se channels configure karein.",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "🔙 Back",
+                        callback_data="settings",
+                    )
+                ]
+            ]),
+        )
+        return
+
+    keyboard = []
+
+    for index, (_, name) in enumerate(channels):
+
+        keyboard.append([
+            InlineKeyboardButton(
+                f"📌 {name}",
+                callback_data=f"channel_{index}",
+            )
+        ])
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "🔙 Back",
+            callback_data="settings",
+        )
+    ])
+
+    await update.callback_query.edit_message_text(
+        "📢 **Select Source Channel**",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+# ============================================================
+# GROUPS
+# ============================================================
+
+async def groups_page(update, context):
+
+    user_id = update.effective_user.id
+
+    groups = get_user_groups(user_id)
+
+    if not groups:
+
+        await update.callback_query.edit_message_text(
+            "❌ Database me koi target group available nahi hai.",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "🔙 Back",
+                        callback_data="settings",
+                    )
+                ]
+            ]),
+        )
+        return
+
+    keyboard = []
+
+    for group_id, name, selected in groups[:40]:
+
+        icon = "✅" if selected else "☑️"
+
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{icon} {name}",
+                callback_data=f"group_{group_id}",
+            )
+        ])
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "☑️ Select All",
+            callback_data="groups_all",
+        ),
+        InlineKeyboardButton(
+            "🔲 Deselect All",
+            callback_data="groups_none",
+        ),
+    ])
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "🔙 Back",
+            callback_data="settings",
+        )
+    ])
+
+    await update.callback_query.edit_message_text(
+        "👥 **Target Groups**",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+# ============================================================
+# TIME SETTINGS
+# ============================================================
+
+async def time_page(update, context):
+
+    config = get_bot_config(
+        update.effective_user.id
+    )
+
+    current = config[1] if config else 30
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "⚡ 20s",
+                callback_data="time_20",
+            ),
+            InlineKeyboardButton(
+                "⚡ 30s",
+                callback_data="time_30",
+            ),
+            InlineKeyboardButton(
+                "⚡ 60s",
+                callback_data="time_60",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "⚡ 120s",
+                callback_data="time_120",
+            ),
+            InlineKeyboardButton(
+                "⚡ 300s",
+                callback_data="time_300",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="settings",
+            )
+        ],
+    ])
+
+    await update.callback_query.edit_message_text(
+        f"⏱️ **Time Interval Settings**\n\n"
+        f"Current: `{current}` seconds",
+        parse_mode="Markdown",
+        reply_markup=keyboard,
+    )
+
+
+# ============================================================
+# HELP
+# ============================================================
+
+async def help_page(update, context):
+
+    text = (
+        "💡 **AdsNova Pro Help Centre**\n\n"
+        "1️⃣ Subscription active karein.\n"
+        "2️⃣ Source channel configure karein.\n"
+        "3️⃣ Target groups select karein.\n"
+        "4️⃣ Posting interval choose karein.\n"
+        "5️⃣ Status page se configuration check karein.\n\n"
+        "🔐 Security: Bot OTP, 2FA password ya "
+        "Telegram session credentials collect nahi karta.\n\n"
+        f"📞 Admin: @{ADMIN_CONTACT_USERNAME}"
+    )
+
+    await update.callback_query.edit_message_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "🔙 Back",
+                    callback_data="main_menu",
+                )
+            ]
+        ]),
+    )
+
+
+# ============================================================
+# ADMIN PANEL
+# ============================================================
+
+async def admin_command(update, context):
+
+    if not is_admin(update.effective_user.id):
+        return
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "💎 Manage Subscription",
+                callback_data="admin_sub",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "📊 User Stats",
+                callback_data="admin_stats",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔙 Main Menu",
+                callback_data="main_menu",
+            )
+        ],
     ])
 
     await update.message.reply_text(
-        admin_text,
+        "👑 **AdsNova Pro Admin Panel**",
         parse_mode="Markdown",
-        reply_markup=reply_markup
+        reply_markup=keyboard,
     )
 
 
@@ -1160,28 +990,23 @@ async def admin_command(
 # ADD SUB
 # ============================================================
 
-async def addsub_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def addsub_command(update, context):
 
-    if update.effective_user.id != ADMIN_ID:
+    if not is_admin(update.effective_user.id):
         return
 
     if not context.args:
 
         await update.message.reply_text(
-            "❌ Usage: `/addsub <user_id> [days]`",
-            parse_mode="Markdown"
+            "Usage:\n"
+            "`/addsub USER_ID DAYS`",
+            parse_mode="Markdown",
         )
-
         return
 
     try:
 
-        target_id = int(
-            context.args[0]
-        )
+        target = int(context.args[0])
 
         days = (
             int(context.args[1])
@@ -1190,14 +1015,15 @@ async def addsub_command(
         )
 
         add_premium_subscription(
-            target_id,
-            days=days
+            target,
+            days=days,
+            plan_type="paid",
         )
 
         await update.message.reply_text(
-            f"✅ User `{target_id}` ko **{days} din** "
-            "ka paid subscription successfully mil gaya!",
-            parse_mode="Markdown"
+            f"✅ User `{target}` ko {days} days "
+            "premium de diya gaya.",
+            parse_mode="Markdown",
         )
 
     except Exception as e:
@@ -1211,12 +1037,9 @@ async def addsub_command(
 # DELETE SUB
 # ============================================================
 
-async def delsub_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def delsub_command(update, context):
 
-    if update.effective_user.id != ADMIN_ID:
+    if not is_admin(update.effective_user.id):
         return
 
     if not context.args:
@@ -1224,18 +1047,13 @@ async def delsub_command(
 
     try:
 
-        target_id = int(
-            context.args[0]
-        )
+        target = int(context.args[0])
 
-        remove_premium_subscription(
-            target_id
-        )
+        remove_premium_subscription(target)
 
         await update.message.reply_text(
-            f"❌ User `{target_id}` ka subscription "
-            "hata diya gaya.",
-            parse_mode="Markdown"
+            f"✅ User `{target}` ka subscription remove kar diya.",
+            parse_mode="Markdown",
         )
 
     except Exception as e:
@@ -1246,91 +1064,94 @@ async def delsub_command(
 
 
 # ============================================================
-# USER STATS
+# ADMIN STATS
 # ============================================================
 
-async def userstats_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def admin_stats(update, context):
 
-    if update.effective_user.id != ADMIN_ID:
+    if not is_admin(update.effective_user.id):
         return
 
-    if not forwarded_counts and not failed_counts:
+    try:
 
-        await update.message.reply_text(
-            "📊 Abhi tak kisi user ne session start "
-            "karke messages forward nahi kiye hain."
+        conn = sqlite3.connect(
+            "bot_database.db"
         )
 
-        return
+        cursor = conn.cursor()
 
-    stats_msg = (
-        "📊 **Users Forwarding Performance Stats:**\n\n"
+        cursor.execute(
+            "SELECT COUNT(*) FROM users"
+        )
+
+        users = cursor.fetchone()[0]
+
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM subscriptions
+            WHERE expiry_date > ?
+            """,
+            (
+                datetime.now().strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                ),
+            ),
+        )
+
+        premium = cursor.fetchone()[0]
+
+        conn.close()
+
+    except Exception:
+
+        users = 0
+        premium = 0
+
+    text = (
+        "📊 **Admin Statistics**\n\n"
+        f"👥 Total Users: `{users}`\n"
+        f"💎 Active Premium: `{premium}`\n"
+        f"⚡ Runtime Sent: `{sum(forwarded_counts.values())}`\n"
+        f"⚠️ Runtime Failed: `{sum(failed_counts.values())}`"
     )
 
-    all_users = set(
-        list(forwarded_counts.keys())
-        + list(failed_counts.keys())
-    )
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="main_menu",
+            )
+        ]
+    ])
 
-    for user_id in all_users:
+    if update.callback_query:
 
-        succ = forwarded_counts.get(
-            user_id,
-            0
+        await update.callback_query.edit_message_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=keyboard,
         )
-
-        fail = failed_counts.get(
-            user_id,
-            0
-        )
-
-        stats_msg += (
-            f"• User ID: `{user_id}`\n"
-            f"  ⚡ Sent: {succ} | ⚠️ Failed: {fail}\n\n"
-        )
-
-    await update.message.reply_text(
-        stats_msg,
-        parse_mode="Markdown"
-    )
 
 
 # ============================================================
 # BROADCAST
 # ============================================================
 
-async def broadcast_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def broadcast_command(update, context):
 
-    if update.effective_user.id != ADMIN_ID:
+    if not is_admin(update.effective_user.id):
         return
 
     if not context.args:
+
+        await update.message.reply_text(
+            "Usage:\n`/broadcast Your message`",
+            parse_mode="Markdown",
+        )
         return
 
-    broadcast_msg = " ".join(
-        context.args
-    )
-
-    bot_link = (
-        f"https://t.me/{BOT_USERNAME}"
-    )
-
-    reply_markup = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                "🚀 Start AdsNova Pro",
-                url=bot_link
-            )
-        ]
-    ])
-
-    import sqlite3
+    message = " ".join(context.args)
 
     conn = sqlite3.connect(
         "bot_database.db"
@@ -1346,1854 +1167,583 @@ async def broadcast_command(
 
     conn.close()
 
-    for user in users:
+    sent = 0
+    failed = 0
+
+    for row in users:
 
         try:
 
             await context.bot.send_message(
-                chat_id=user[0],
-                text=broadcast_msg,
-                parse_mode="Markdown",
-                reply_markup=reply_markup
+                chat_id=row[0],
+                text=message,
             )
+
+            sent += 1
 
             await asyncio.sleep(0.05)
 
         except Exception:
-            continue
+            failed += 1
 
     await update.message.reply_text(
-        "✅ Broadcast complete!"
+        f"✅ Broadcast completed.\n\n"
+        f"📨 Sent: {sent}\n"
+        f"⚠️ Failed: {failed}"
     )
-
-
-# ============================================================
-# MESSAGE HANDLER
-# ============================================================
-
-async def handle_message(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    user_id = update.effective_user.id
-
-    if not update.message or not update.message.text:
-        return
-
-    text = update.message.text.strip()
-
-    # Admin subscription target ID
-    if (
-        user_id == ADMIN_ID
-        and user_id in admin_sub_target
-        and admin_sub_target[user_id].get("step")
-        == "waiting_target_id"
-    ):
-
-        try:
-
-            target_id = int(text)
-
-            admin_sub_target[user_id][
-                "target_id"
-            ] = target_id
-
-            admin_sub_target[user_id][
-                "step"
-            ] = "select_plan"
-
-            keyboard = [
-                [
-                    InlineKeyboardButton(
-                        "💎 ₹399 - 1 Month (30 Days)",
-                        callback_data="sub_plan_30"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        "💎 ₹799 - 3 Month (90 Days)",
-                        callback_data="sub_plan_90"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        "💎 ₹1999 - 6 Month (180 Days)",
-                        callback_data="sub_plan_180"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        "🔙 Cancel",
-                        callback_data="admin_cancel"
-                    )
-                ]
-            ]
-
-            await update.message.reply_text(
-                f"✅ Target User ID: `{target_id}`\n\n"
-                "Ab niche diye gaye plans mein se "
-                "koi ek select karein:",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup(
-                    keyboard
-                )
-            )
-
-            return
-
-        except ValueError:
-
-            await update.message.reply_text(
-                "❌ Kripya valid numeric User ID bhejein:"
-            )
-
-            return
-
-    # Login state
-    if user_id not in user_login_state:
-        return
-
-    state = user_login_state[user_id]
-
-    step = state.get("step")
-    slot_num = state.get("slot_number")
-
-    # --------------------------------------------------------
-    # PHONE
-    # --------------------------------------------------------
-
-    if step == "waiting_phone":
-
-        state["phone"] = text
-        state["step"] = "waiting_otp"
-
-        client = TelegramClient(
-            StringSession(),
-            API_ID,
-            API_HASH
-        )
-
-        state["client"] = client
-
-        try:
-
-            await client.connect()
-
-            sent = await client.send_code_request(
-                text
-            )
-
-            state["phone_code_hash"] = (
-                sent.phone_code_hash
-            )
-
-            await update.message.reply_text(
-                "📩 OTP code aapke Telegram account "
-                "par bhej diya gaya hai:"
-            )
-
-        except Exception as e:
-
-            user_login_state.pop(
-                user_id,
-                None
-            )
-
-            await update.message.reply_text(
-                f"❌ Error sending OTP: {e}"
-            )
-
-    # --------------------------------------------------------
-    # OTP
-    # --------------------------------------------------------
-
-    elif step == "waiting_otp":
-
-        state["otp"] = text.replace(
-            " ",
-            ""
-        )
-
-        client = state["client"]
-
-        phone = state["phone"]
-
-        phone_code_hash = state[
-            "phone_code_hash"
-        ]
-
-        try:
-
-            await client.sign_in(
-                phone=phone,
-                code=state["otp"],
-                phone_code_hash=phone_code_hash
-            )
-
-            me = await client.get_me()
-
-            session_str = client.session.save()
-
-            acc_name = (
-                f"{me.first_name or ''} "
-                f"{me.last_name or ''}"
-            ).strip() or me.username or phone
-
-            await update_account_bio(
-                client
-            )
-
-            save_user_session(
-                user_id,
-                slot_num,
-                phone,
-                session_str,
-                acc_name
-            )
-
-            set_active_slot(
-                user_id,
-                slot_num
-            )
-
-            try:
-
-                dialogs = await client.get_dialogs(
-                    limit=None
-                )
-
-                groups = []
-                channels = []
-
-                for d in dialogs:
-
-                    if d.is_channel or d.is_group:
-
-                        entity = d.entity
-
-                        if getattr(
-                            entity,
-                            "broadcast",
-                            False
-                        ):
-
-                            channels.append(
-                                (d.id, d.title)
-                            )
-
-                        elif (
-                            getattr(
-                                entity,
-                                "megagroup",
-                                False
-                            )
-                            or d.is_group
-                        ):
-
-                            groups.append(
-                                (d.id, d.title)
-                            )
-
-                        else:
-
-                            channels.append(
-                                (d.id, d.title)
-                            )
-
-                save_real_groups_and_channels(
-                    user_id,
-                    groups,
-                    channels
-                )
-
-            except Exception:
-                pass
-
-            await client.disconnect()
-
-            user_login_state.pop(
-                user_id,
-                None
-            )
-
-            await update.message.reply_text(
-                f"✅ **Slot {slot_num} Connected Successfully!**\n"
-                f"Account: {acc_name}\n\n"
-                "✨ (Aapke bio mein bot ka link "
-                "automatically set ho gaya hai!)",
-                parse_mode="Markdown"
-            )
-
-            await start(
-                update,
-                context
-            )
-
-        except Exception as e:
-
-            err_str = str(e)
-
-            if (
-                "SessionPasswordNeeded" in err_str
-                or "password" in err_str.lower()
-                or "Two-steps verification"
-                in err_str
-            ):
-
-                state["step"] = (
-                    "waiting_password"
-                )
-
-                await update.message.reply_text(
-                    "🔒 Aapke account par 2-Step "
-                    "Verification laga hua hai. "
-                    "Apna password yahan bhejein:"
-                )
-
-            else:
-
-                user_login_state.pop(
-                    user_id,
-                    None
-                )
-
-                await update.message.reply_text(
-                    f"❌ Login Failed: {e}"
-                )
-
-    # --------------------------------------------------------
-    # PASSWORD
-    # --------------------------------------------------------
-
-    elif step == "waiting_password":
-
-        client = state["client"]
-
-        password = text
-
-        try:
-
-            await client.sign_in(
-                password=password
-            )
-
-            me = await client.get_me()
-
-            session_str = client.session.save()
-
-            acc_name = (
-                f"{me.first_name or ''} "
-                f"{me.last_name or ''}"
-            ).strip() or me.username or state["phone"]
-
-            await update_account_bio(
-                client
-            )
-
-            save_user_session(
-                user_id,
-                slot_num,
-                state["phone"],
-                session_str,
-                acc_name
-            )
-
-            set_active_slot(
-                user_id,
-                slot_num
-            )
-
-            try:
-
-                dialogs = await client.get_dialogs(
-                    limit=None
-                )
-
-                groups = []
-                channels = []
-
-                for d in dialogs:
-
-                    if d.is_channel or d.is_group:
-
-                        entity = d.entity
-
-                        if getattr(
-                            entity,
-                            "broadcast",
-                            False
-                        ):
-
-                            channels.append(
-                                (d.id, d.title)
-                            )
-
-                        elif (
-                            getattr(
-                                entity,
-                                "megagroup",
-                                False
-                            )
-                            or d.is_group
-                        ):
-
-                            groups.append(
-                                (d.id, d.title)
-                            )
-
-                        else:
-
-                            channels.append(
-                                (d.id, d.title)
-                            )
-
-                save_real_groups_and_channels(
-                    user_id,
-                    groups,
-                    channels
-                )
-
-            except Exception:
-                pass
-
-            await client.disconnect()
-
-            user_login_state.pop(
-                user_id,
-                None
-            )
-
-            await update.message.reply_text(
-                f"✅ **Slot {slot_num} Connected Successfully!**\n"
-                f"Account: {acc_name}\n\n"
-                "✨ (Aapke bio mein bot ka link "
-                "automatically set ho gaya hai!)",
-                parse_mode="Markdown"
-            )
-
-            await start(
-                update,
-                context
-            )
-
-        except Exception as e:
-
-            user_login_state.pop(
-                user_id,
-                None
-            )
-
-            await update.message.reply_text(
-                f"❌ Password Error: {e}"
-            )
 
 
 # ============================================================
 # BUTTON HANDLER
 # ============================================================
 
-async def button_handler(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def button_handler(update, context):
 
     query = update.callback_query
 
     await query.answer()
 
     data = query.data
-
     user_id = query.from_user.id
 
-    # --------------------------------------------------------
-    # ADMIN BUTTONS
-    # --------------------------------------------------------
+    # Membership
+    if data == "check_membership":
 
-    if user_id == ADMIN_ID:
-
-        if data == "admin_manage_sub":
-
-            admin_sub_user_state = (
-                admin_sub_target.setdefault(
-                    user_id,
-                    {}
-                )
-            )
-
-            admin_sub_user_state[
-                "step"
-            ] = "waiting_target_id"
-
-            await query.edit_message_text(
-                "💎 **Manage Subscriptions Panel**\n\n"
-                "Kripya us user ki **Telegram ID** "
-                "message mein bhejein jise subscription dena hai:",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton(
-                            "🔙 Cancel",
-                            callback_data="admin_cancel"
-                        )
-                    ]
-                ])
-            )
-
-            return
-
-        elif data == "admin_user_stats":
-
-            if (
-                not forwarded_counts
-                and not failed_counts
-            ):
-
-                await query.edit_message_text(
-                    "📊 Abhi tak kisi user ne messages "
-                    "forward nahi kiye hain.",
-                    reply_markup=InlineKeyboardMarkup([
-                        [
-                            InlineKeyboardButton(
-                                "🔙 Back",
-                                callback_data="main_menu"
-                            )
-                        ]
-                    ])
-                )
-
-                return
-
-            stats_msg = (
-                "📊 **Users Forwarding "
-                "Performance Stats:**\n\n"
-            )
-
-            all_users = set(
-                list(forwarded_counts.keys())
-                + list(failed_counts.keys())
-            )
-
-            for u_id in all_users:
-
-                succ = forwarded_counts.get(
-                    u_id,
-                    0
-                )
-
-                fail = failed_counts.get(
-                    u_id,
-                    0
-                )
-
-                stats_msg += (
-                    f"• User ID: `{u_id}`\n"
-                    f"  ⚡ Sent: {succ} | "
-                    f"⚠️ Failed: {fail}\n\n"
-                )
-
-            await query.edit_message_text(
-                stats_msg,
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton(
-                            "🔙 Back",
-                            callback_data="main_menu"
-                        )
-                    ]
-                ])
-            )
-
-            return
-
-        elif data.startswith("sub_plan_"):
-
-            days_map = {
-                "30": 30,
-                "90": 90,
-                "180": 180
-            }
-
-            days_val = days_map.get(
-                data.split("_")[2],
-                30
-            )
-
-            target_data = admin_sub_target.get(
-                user_id,
-                {}
-            )
-
-            target_id = target_data.get(
-                "target_id"
-            )
-
-            if target_id:
-
-                add_premium_subscription(
-                    target_id,
-                    days=days_val
-                )
-
-                admin_sub_target.pop(
-                    user_id,
-                    None
-                )
-
-                await query.edit_message_text(
-                    f"✅ Success! User `{target_id}` "
-                    f"ko successfully **{days_val} days** "
-                    "ka plan assign kar diya gaya hai!",
-                    parse_mode="Markdown",
-                    reply_markup=InlineKeyboardMarkup([
-                        [
-                            InlineKeyboardButton(
-                                "🔙 Back to Menu",
-                                callback_data="main_menu"
-                            )
-                        ]
-                    ])
-                )
-
-            else:
-
-                await query.edit_message_text(
-                    "❌ Error: Target user ID not found.",
-                    reply_markup=InlineKeyboardMarkup([
-                        [
-                            InlineKeyboardButton(
-                                "🔙 Back",
-                                callback_data="main_menu"
-                            )
-                        ]
-                    ])
-                )
-
-            return
-
-        elif data == "admin_cancel":
-
-            admin_sub_target.pop(
-                user_id,
-                None
-            )
-
+        if await check_membership(
+            user_id,
+            context,
+        ):
             await start(
                 update,
-                context
+                context,
+            )
+        else:
+            await query.answer(
+                "❌ Channel abhi join nahi hua.",
+                show_alert=True,
             )
 
-            return
+        return
 
-    # --------------------------------------------------------
-    # LANGUAGE
-    # --------------------------------------------------------
-
+    # Language
     if data == "toggle_lang":
 
-        current_lang = user_languages.get(
+        old = user_languages.get(
             user_id,
-            "hi"
+            "hi",
         )
 
-        new_lang = (
+        user_languages[user_id] = (
             "en"
-            if current_lang == "hi"
+            if old == "hi"
             else "hi"
         )
 
-        user_languages[user_id] = new_lang
-
-        await query.answer(
-            f"Language changed to "
-            f"{'English' if new_lang == 'en' else 'Hinglish'}!",
-            show_alert=True
-        )
-
         await start(
             update,
-            context
+            context,
         )
-
         return
 
-    # --------------------------------------------------------
-    # MEMBERSHIP
-    # --------------------------------------------------------
-
-    if data == "check_membership":
-
-        is_joined = await check_channel_membership(
-            user_id,
-            context
-        )
-
-        if is_joined:
-
-            await start(
-                update,
-                context
-            )
-
-        else:
-
-            await query.answer(
-                "❌ Aapne abhi tak channel join "
-                "nahi kiya hai!",
-                show_alert=True
-            )
-
-        return
-
-    # --------------------------------------------------------
-    # CHANNEL CHECK
-    # --------------------------------------------------------
-
-    if not await check_channel_membership(
+    # Everything below requires membership
+    if not await check_membership(
         user_id,
-        context
+        context,
     ):
 
-        join_text = (
-            "❌ **Channel Join Required!**\n"
-            "Aapne channel leave kar diya hai."
+        await show_join_required(
+            update,
+            context,
         )
-
-        kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton(
-                    "📢 Join Channel",
-                    url=(
-                        f"https://t.me/"
-                        f"{FORCE_CHANNEL_USERNAME.replace('@', '')}"
-                    )
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🔄 Check Membership",
-                    callback_data="check_membership"
-                )
-            ]
-        ])
-
-        await query.edit_message_text(
-            join_text,
-            parse_mode="Markdown",
-            reply_markup=kb
-        )
-
         return
 
-    # --------------------------------------------------------
-    # MAIN MENU
-    # --------------------------------------------------------
-
+    # Main menu
     if data == "main_menu":
-
-        user_login_state.pop(
-            user_id,
-            None
-        )
-
-        admin_sub_target.pop(
-            user_id,
-            None
-        )
 
         await start(
             update,
-            context
+            context,
         )
-
         return
 
-    # --------------------------------------------------------
-    # SUBSCRIPTION
-    # --------------------------------------------------------
-
+    # Subscription
     if data == "subscription":
 
-        if user_id == ADMIN_ID:
-
-            sub_text = (
-                "💎 **Subscription Details** 💎\n\n"
-                "🌟 Status: Active ✅\n"
-                "🏷️ Type: `Lifetime (Admin) ♾️`\n"
-                "⏳ Expiry: `Unlimited`"
-            )
-
-        elif is_premium(user_id):
-
-            expiry_str = get_user_expiry(
-                user_id
-            )
-
-            remaining = get_remaining_days(
-                user_id
-            )
-
-            sub_type_label = (
-                get_subscription_type_label(
-                    user_id
-                )
-            )
-
-            sub_text = (
-                "💎 **Subscription Details** 💎\n\n"
-                "🌟 Status: Active ✅\n"
-                f"🏷️ Type: `{sub_type_label}`\n"
-                f"⏳ Expiry Date: `{expiry_str}`\n"
-                f"⏱️ Remaining Time: `{remaining}`"
-            )
-
-        else:
-
-            sub_text = (
-                "💎 **Subscription Details "
-                "& Pricing Plans** 💎\n\n"
-                "🌟 Status: Inactive ❌\n\n"
-                "📦 **Available Plans:**\n"
-                "• **₹399** - 1 Month (30 Days)\n"
-                "• **₹799** - 3 Months (90 Days)\n"
-                "• **₹1999** - 6 Months (180 Days)\n\n"
-                "Plan buy karne ke liye niche button "
-                "par click karke Admin ko message karein:"
-            )
-
-        keyboard = []
-
-        if (
-            user_id != ADMIN_ID
-            and not is_premium(user_id)
-        ):
-
-            keyboard.append([
-                InlineKeyboardButton(
-                    "🛒 Buy Subscription "
-                    "(Contact Admin)",
-                    url=(
-                        f"https://t.me/"
-                        f"{ADMIN_CONTACT_USERNAME}"
-                    )
-                )
-            ])
-
-        keyboard.append([
-            InlineKeyboardButton(
-                "🔙 Back to Menu",
-                callback_data="main_menu"
-            )
-        ])
-
-        await query.edit_message_text(
-            sub_text,
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(
-                keyboard
-            )
+        await subscription_page(
+            update,
+            context,
         )
-
         return
 
-    # --------------------------------------------------------
-    # REFERRAL
-    # --------------------------------------------------------
-
+    # Referral
     if data == "referral_info":
 
-        ref_link = (
-            f"https://t.me/"
-            f"{BOT_USERNAME}"
-            f"?start=ref_{user_id}"
+        await referral_page(
+            update,
+            context,
         )
-
-        share_text = (
-            "🎁 Is link se AdsNova Pro Bot ko "
-            "start karo aur 2 din bilkul free "
-            "mein bot test karo! 👇\n"
-            f"{ref_link}"
-        )
-
-        share_url = (
-            "https://t.me/share/url?"
-            f"url={ref_link}&text={share_text}"
-        )
-
-        ref_msg = (
-            "🎁 **Free Trial & Referral System** 🎁\n\n"
-            "Aap apna yeh unique referral link "
-            "doston ke sath share karein:\n"
-            f"`{ref_link}`\n\n"
-            "💡 **Note:** Jo bhi is link se bot "
-            "start karega, use **2 din ka free trial** milega!"
-        )
-
-        keyboard = [
-            [
-                InlineKeyboardButton(
-                    "🚀 Share Link Now",
-                    url=share_url
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🔙 Back to Menu",
-                    callback_data="main_menu"
-                )
-            ]
-        ]
-
-        await query.edit_message_text(
-            ref_msg,
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(
-                keyboard
-            )
-        )
-
         return
 
-    # --------------------------------------------------------
-    # HELP
-    # --------------------------------------------------------
-
+    # Help
     if data == "help_centre":
 
-        help_text = (
-            "💡 **AdsNova Pro - Help Centre** 💡\n\n"
-            "1️⃣ **Login Accounts:** Multiple Telegram "
-            "accounts connect karein.\n"
-            "2️⃣ **Source Channel:** Jahan se messages "
-            "uthane hain wo set karein.\n"
-            "3️⃣ **Target Groups:** Jahan ads bhejni hain "
-            "unhe select karein.\n"
-            "4️⃣ **Time Interval:** Gap set karein.\n\n"
-            f"📞 Admin Contact: @{ADMIN_CONTACT_USERNAME}"
+        await help_page(
+            update,
+            context,
         )
-
-        await query.edit_message_text(
-            help_text,
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(
-                        "🔙 Back to Menu",
-                        callback_data="main_menu"
-                    )
-                ]
-            ])
-        )
-
         return
 
-    # --------------------------------------------------------
-    # REFRESH
-    # --------------------------------------------------------
-
+    # Refresh
     if data == "refresh":
 
         await start(
             update,
-            context
+            context,
         )
-
         return
 
-    # --------------------------------------------------------
-    # ACCESS
-    # --------------------------------------------------------
+    # Access
+    if not has_access(user_id):
 
-    if not check_user_access(user_id):
-
-        text = (
-            "❌ **Subscription Required!**\n"
-            "Aapka subscription active nahi hai."
+        await show_subscription_required(
+            update,
+            context,
         )
-
-        kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton(
-                    "🛒 Buy Subscription "
-                    "(Contact Admin)",
-                    url=(
-                        f"https://t.me/"
-                        f"{ADMIN_CONTACT_USERNAME}"
-                    )
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🔙 Back to Menu",
-                    callback_data="main_menu"
-                )
-            ]
-        ])
-
-        await query.edit_message_text(
-            text,
-            parse_mode="Markdown",
-            reply_markup=kb
-        )
-
         return
 
-    # --------------------------------------------------------
-    # STATUS
-    # --------------------------------------------------------
-
+    # Status
     if data == "status":
 
         await status_command(
             update,
-            context
+            context,
         )
-
         return
 
-    # --------------------------------------------------------
-    # SWITCH ACCOUNT
-    # --------------------------------------------------------
+    # Settings
+    if data == "settings":
 
-    elif data == "switch_acc":
-
-        sessions = get_user_sessions(
-            user_id
+        await settings_page(
+            update,
+            context,
         )
+        return
 
-        filled_slots = len(sessions)
+    # Source channel
+    if data == "opt_1":
 
-        active_slot = get_active_slot(
-            user_id
+        await source_channel_page(
+            update,
+            context,
         )
+        return
 
-        connected_slots = {
-            s[0]
-            for s in sessions
-        }
-
-        keyboard = []
-
-        row = []
-
-        for i in range(1, 21):
-
-            icon = "🟢"
-
-            if i in connected_slots:
-                icon = "🔴"
-
-            if i == active_slot:
-                icon = "👉"
-
-            row.append(
-                InlineKeyboardButton(
-                    f"{icon} {i}",
-                    callback_data=f"slot_click_{i}"
-                )
-            )
-
-            if len(row) == 5:
-
-                keyboard.append(row)
-                row = []
-
-        keyboard.append([
-            InlineKeyboardButton(
-                "🔙 Back to Menu",
-                callback_data="main_menu"
-            )
-        ])
-
-        text = (
-            "🔄 **Switch Account (Slots)**\n\n"
-            f"📍 Active Slot: {active_slot}\n"
-            f"📊 {filled_slots}/20 slots filled"
-        )
-
-        await query.edit_message_text(
-            text,
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(
-                keyboard
-            )
-        )
-
-    # --------------------------------------------------------
-    # SLOT
-    # --------------------------------------------------------
-
-    elif data.startswith("slot_click_"):
-
-        slot_num = int(
-            data.split("_")[2]
-        )
-
-        slot_data = get_slot_session(
-            user_id,
-            slot_num
-        )
-
-        if slot_data:
-
-            set_active_slot(
-                user_id,
-                slot_num
-            )
-
-            await query.edit_message_text(
-                f"✅ Switched to Slot {slot_num}!",
-                reply_markup=InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton(
-                            "🔙 Back to Menu",
-                            callback_data="main_menu"
-                        )
-                    ]
-                ])
-            )
-
-        else:
-
-            user_login_state[user_id] = {
-                "step": "waiting_phone",
-                "slot_number": slot_num
-            }
-
-            await query.edit_message_text(
-                f"📱 **Telegram Account Login "
-                f"(Slot {slot_num})**\n\n"
-                "Apna Phone Number country code "
-                "ke sath bhejein (+91...):",
-                parse_mode="Markdown"
-            )
-
-    # --------------------------------------------------------
-    # STOP SLOT
-    # --------------------------------------------------------
-
-    elif data.startswith("stop_slot_"):
-
-        slot_num = int(
-            data.split("_")[2]
-        )
-
-        set_slot_stopped(
-            user_id,
-            slot_num,
-            1
-        )
-
-        kb = await get_main_keyboard(
-            user_id
-        )
-
-        await query.edit_message_text(
-            "💎 **AdsNova Pro Bot - Main Menu** 💎\n\n"
-            "🛑 Slot Stopped.",
-            parse_mode="Markdown",
-            reply_markup=kb
-        )
-
-    # --------------------------------------------------------
-    # START SLOT
-    # --------------------------------------------------------
-
-    elif data.startswith("start_slot_"):
-
-        slot_num = int(
-            data.split("_")[2]
-        )
-
-        set_slot_stopped(
-            user_id,
-            slot_num,
-            0
-        )
-
-        kb = await get_main_keyboard(
-            user_id
-        )
-
-        await query.edit_message_text(
-            "💎 **AdsNova Pro Bot - Main Menu** 💎\n\n"
-            "🟢 Slot Restarted.",
-            parse_mode="Markdown",
-            reply_markup=kb
-        )
-
-    # --------------------------------------------------------
-    # LOGOUT
-    # --------------------------------------------------------
-
-    elif data == "logout_acc":
-
-        active_slot = get_active_slot(
-            user_id
-        )
-
-        remove_user_session(
-            user_id,
-            active_slot
-        )
-
-        kb = await get_main_keyboard(
-            user_id
-        )
-
-        await query.edit_message_text(
-            f"💎 **AdsNova Pro Bot - Main Menu** 💎\n\n"
-            f"🚪 Slot {active_slot} Logged Out.",
-            parse_mode="Markdown",
-            reply_markup=kb
-        )
-
-    # --------------------------------------------------------
-    # SETTINGS
-    # --------------------------------------------------------
-
-    elif data == "settings":
-
-        keyboard = [
-            [
-                InlineKeyboardButton(
-                    "📢 1 Source Channel Setup",
-                    callback_data="opt_1"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "👥 2 Auto Forward to Groups",
-                    callback_data="opt_2"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "⏱️ 3 Time Interval Settings",
-                    callback_data="opt_3"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "💬 4 Auto-Reply Share Message",
-                    callback_data="opt_4"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🔄 Refresh Channels List",
-                    callback_data="refresh_channels"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🔙 Back to Menu",
-                    callback_data="main_menu"
-                )
-            ]
-        ]
-
-        await query.edit_message_text(
-            "⚙️ **AdsNova Settings Menu**",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(
-                keyboard
-            )
-        )
-
-    # --------------------------------------------------------
-    # REFRESH CHANNELS
-    # --------------------------------------------------------
-
-    elif data == "refresh_channels":
-
-        active_slot = get_active_slot(
-            user_id
-        )
-
-        slot_data = get_slot_session(
-            user_id,
-            active_slot
-        )
-
-        if not slot_data:
-
-            await query.answer(
-                "❌ Pehle account login karein!",
-                show_alert=True
-            )
-
-            return
-
-        phone, session_str, _, _ = slot_data
-
-        client = TelegramClient(
-            StringSession(session_str),
-            API_ID,
-            API_HASH
-        )
+    if data.startswith("channel_"):
 
         try:
 
-            await client.connect()
+            index = int(
+                data.split("_")[1]
+            )
 
-            if await client.is_user_authorized():
+            channels = get_user_channels(
+                user_id
+            )
 
-                dialogs = await client.get_dialogs(
-                    limit=None
-                )
+            if index < len(channels):
 
-                groups = []
-                channels = []
+                channel_name = channels[index][1]
 
-                for d in dialogs:
-
-                    if d.is_channel or d.is_group:
-
-                        entity = d.entity
-
-                        if getattr(
-                            entity,
-                            "broadcast",
-                            False
-                        ):
-
-                            channels.append(
-                                (d.id, d.title)
-                            )
-
-                        elif (
-                            getattr(
-                                entity,
-                                "megagroup",
-                                False
-                            )
-                            or d.is_group
-                        ):
-
-                            groups.append(
-                                (d.id, d.title)
-                            )
-
-                        else:
-
-                            channels.append(
-                                (d.id, d.title)
-                            )
-
-                save_real_groups_and_channels(
+                set_source_channel(
                     user_id,
-                    groups,
-                    channels
+                    channel_name,
                 )
 
-                await client.disconnect()
-
                 await query.answer(
-                    "✅ Saare channels refresh ho gaye!",
-                    show_alert=True
+                    "✅ Source channel set!",
+                    show_alert=True,
                 )
 
-            else:
-
-                await client.disconnect()
-
-                await query.answer(
-                    "❌ Session expired! "
-                    "Dubara login karein.",
-                    show_alert=True
+                await settings_page(
+                    update,
+                    context,
                 )
 
         except Exception as e:
 
-            try:
-                await client.disconnect()
-            except Exception:
-                pass
-
             await query.answer(
-                f"❌ Error: {e}",
-                show_alert=True
+                f"Error: {e}",
+                show_alert=True,
             )
 
-        keyboard = [
-            [
-                InlineKeyboardButton(
-                    "📢 1 Source Channel Setup",
-                    callback_data="opt_1"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "👥 2 Auto Forward to Groups",
-                    callback_data="opt_2"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "⏱️ 3 Time Interval Settings",
-                    callback_data="opt_3"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "💬 4 Auto-Reply Share Message",
-                    callback_data="opt_4"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🔄 Refresh Channels List",
-                    callback_data="refresh_channels"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🔙 Back to Menu",
-                    callback_data="main_menu"
-                )
-            ]
-        ]
+        return
 
-        await query.edit_message_text(
-            "⚙️ **AdsNova Settings Menu**\n\n"
-            "Channels successfully refreshed!",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(
-                keyboard
-            )
+    # Groups
+    if data == "opt_2":
+
+        await groups_page(
+            update,
+            context,
         )
+        return
 
-    # --------------------------------------------------------
-    # SOURCE CHANNEL
-    # --------------------------------------------------------
+    if data.startswith("group_"):
 
-    elif (
-        data == "opt_1"
-        or data.startswith("set_chan_sel_")
-    ):
+        try:
 
-        channels = get_user_channels(
-            user_id
-        )
-
-        if not channels:
-
-            await query.edit_message_text(
-                "❌ Aapke account mein koi channel "
-                "nahi mila! Refresh karein.",
-                reply_markup=InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton(
-                            "🔙 Back to Settings",
-                            callback_data="settings"
-                        )
-                    ]
-                ])
-            )
-
-            return
-
-        if data.startswith(
-            "set_chan_sel_"
-        ):
-
-            idx = int(
-                data.split("_")[3]
-            )
-
-            c_name = channels[idx][1]
-
-            set_source_channel(
-                user_id,
-                c_name
-            )
-
-            await query.edit_message_text(
-                f"✅ Source Channel Set: '{c_name}'",
-                reply_markup=InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton(
-                            "🔙 Back to Settings",
-                            callback_data="settings"
-                        )
-                    ]
-                ])
-            )
-
-            return
-
-        keyboard = [
-            [
-                InlineKeyboardButton(
-                    f"📌 {cname}",
-                    callback_data=f"set_chan_sel_{i}"
-                )
-            ]
-            for i, (cid, cname)
-            in enumerate(channels)
-        ]
-
-        keyboard.append([
-            InlineKeyboardButton(
-                "🔙 Back to Settings",
-                callback_data="settings"
-            )
-        ])
-
-        await query.edit_message_text(
-            "📢 **Select Source Channel**",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(
-                keyboard
-            )
-        )
-
-    # --------------------------------------------------------
-    # GROUP SETTINGS
-    # --------------------------------------------------------
-
-    elif (
-        data == "opt_2"
-        or data.startswith("grp_page_")
-        or data.startswith("grp_tog_")
-        or data in [
-            "grp_select_all",
-            "grp_deselect_all",
-            "grp_done"
-        ]
-    ):
-
-        groups = get_user_groups(
-            user_id
-        )
-
-        if not groups:
-
-            await query.edit_message_text(
-                "❌ Aapke account mein koi group "
-                "nahi mila!",
-                reply_markup=InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton(
-                            "🔙 Back to Settings",
-                            callback_data="settings"
-                        )
-                    ]
-                ])
-            )
-
-            return
-
-        total_groups = len(groups)
-
-        page = 0
-
-        if data.startswith(
-            "grp_page_"
-        ):
-
-            page = int(
-                data.split("_")[2]
-            )
-
-        elif data.startswith(
-            "grp_tog_"
-        ):
-
-            parts = data.split("_")
+            group_id = data.split(
+                "group_",
+                1
+            )[1]
 
             toggle_group_selection(
                 user_id,
-                parts[2]
+                group_id,
             )
 
-            page = int(parts[3])
-
-            groups = get_user_groups(
-                user_id
+            await groups_page(
+                update,
+                context,
             )
 
-        elif data == "grp_select_all":
+        except Exception as e:
 
-            set_all_groups_selection(
+            await query.answer(
+                f"Error: {e}",
+                show_alert=True,
+            )
+
+        return
+
+    if data == "groups_all":
+
+        set_all_groups_selection(
+            user_id,
+            1,
+        )
+
+        await groups_page(
+            update,
+            context,
+        )
+        return
+
+    if data == "groups_none":
+
+        set_all_groups_selection(
+            user_id,
+            0,
+        )
+
+        await groups_page(
+            update,
+            context,
+        )
+        return
+
+    # Time
+    if data == "opt_3":
+
+        await time_page(
+            update,
+            context,
+        )
+        return
+
+    if data.startswith("time_"):
+
+        try:
+
+            seconds = int(
+                data.split("_")[1]
+            )
+
+            set_time_interval(
                 user_id,
-                1
+                seconds,
             )
 
-            groups = get_user_groups(
-                user_id
+            await query.answer(
+                f"✅ Interval set: {seconds}s",
+                show_alert=True,
             )
 
-        elif data == "grp_deselect_all":
-
-            set_all_groups_selection(
-                user_id,
-                0
+            await time_page(
+                update,
+                context,
             )
 
-            groups = get_user_groups(
-                user_id
+        except Exception as e:
+
+            await query.answer(
+                f"Error: {e}",
+                show_alert=True,
             )
 
-        elif data == "grp_done":
+        return
 
-            await query.edit_message_text(
-                "✅ Groups saved successfully!",
-                reply_markup=InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton(
-                            "🔙 Back to Settings",
-                            callback_data="settings"
-                        )
-                    ]
-                ])
-            )
+    # Share message
+    if data == "opt_4":
 
-            return
-
-        per_page = 10
-
-        start_idx = (
-            page * per_page
-        )
-
-        end_idx = min(
-            start_idx + per_page,
-            total_groups
-        )
-
-        keyboard = [
-            [
-                InlineKeyboardButton(
-                    f"{'✅' if is_sel == 1 else '☑️'} "
-                    f"{g_name}",
-                    callback_data=(
-                        f"grp_tog_{g_id}_{page}"
-                    )
-                )
-            ]
-            for g_id, g_name, is_sel
-            in groups[start_idx:end_idx]
-        ]
-
-        nav = []
-
-        if page > 0:
-
-            nav.append(
-                InlineKeyboardButton(
-                    "⬅️ Previous",
-                    callback_data=f"grp_page_{page-1}"
-                )
-            )
-
-        if end_idx < total_groups:
-
-            nav.append(
-                InlineKeyboardButton(
-                    "➡️ Next",
-                    callback_data=f"grp_page_{page+1}"
-                )
-            )
-
-        if nav:
-            keyboard.append(nav)
-
-        keyboard.append([
-            InlineKeyboardButton(
-                "☑️ Select All",
-                callback_data="grp_select_all"
-            ),
-            InlineKeyboardButton(
-                "🔲 Deselect All",
-                callback_data="grp_deselect_all"
-            )
-        ])
-
-        keyboard.append([
-            InlineKeyboardButton(
-                "✔️ Done",
-                callback_data="grp_done"
-            )
-        ])
-
-        keyboard.append([
-            InlineKeyboardButton(
-                "🔙 Back to Settings",
-                callback_data="settings"
-            )
-        ])
-
-        await query.edit_message_text(
-            f"👥 **Select Target Groups**\n\n"
-            f"Showing {start_idx+1}-{end_idx} "
-            f"of {total_groups}",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(
-                keyboard
-            )
-        )
-
-    # --------------------------------------------------------
-    # TIME
-    # --------------------------------------------------------
-
-    elif data == "opt_3":
-
-        config = get_bot_config(
+        current = get_custom_share_message(
             user_id
         )
 
-        current_time = (
-            config[1]
-            if config
-            else 30
+        await query.edit_message_text(
+            "💬 **Share Message**\n\n"
+            f"Current message:\n`{current}`\n\n"
+            "Custom message editing ko safe version "
+            "me direct Telegram account access ke bina "
+            "handle kiya ja sakta hai.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "🔙 Back",
+                        callback_data="settings",
+                    )
+                ]
+            ]),
         )
 
-        keyboard = [
-            [
-                InlineKeyboardButton(
-                    "⚡ 20s",
-                    callback_data="time_20"
-                ),
-                InlineKeyboardButton(
-                    "⚡ 30s",
-                    callback_data="time_30"
-                ),
-                InlineKeyboardButton(
-                    "⚡ 60s",
-                    callback_data="time_60"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "⚡ 120s",
-                    callback_data="time_120"
-                ),
-                InlineKeyboardButton(
-                    "⚡ 300s",
-                    callback_data="time_300"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🔙 Back to Settings",
-                    callback_data="settings"
-                )
-            ]
-        ]
+        return
+
+    # Admin subscription
+    if data == "admin_sub":
+
+        if not is_admin(user_id):
+            return
+
+        admin_sub_target[user_id] = {
+            "step": "target"
+        }
 
         await query.edit_message_text(
-            f"⏱️ **Time Interval Settings**\n\n"
-            f"Current: {current_time} seconds",
+            "💎 **Manage Subscription**\n\n"
+            "Ab jis user ko subscription dena hai "
+            "uski Telegram User ID message me bhejein.\n\n"
+            "Example: `123456789`",
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(
-                keyboard
-            )
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "🔙 Cancel",
+                        callback_data="main_menu",
+                    )
+                ]
+            ]),
         )
 
-    elif data.startswith("time_"):
+        return
 
-        t_val = int(
+    # Admin stats
+    if data == "admin_stats":
+
+        await admin_stats(
+            update,
+            context,
+        )
+        return
+
+
+# ============================================================
+# TEXT HANDLER
+# ============================================================
+
+async def handle_message(update, context):
+
+    user_id = update.effective_user.id
+
+    if not update.message:
+        return
+
+    text = update.message.text.strip()
+
+    # Admin subscription target
+    if (
+        is_admin(user_id)
+        and user_id in admin_sub_target
+        and admin_sub_target[user_id].get("step")
+        == "target"
+    ):
+
+        try:
+
+            target_id = int(text)
+
+            admin_sub_target[user_id] = {
+                "step": "plan",
+                "target_id": target_id,
+            }
+
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "💎 ₹399 — 30 Days",
+                        callback_data="plan_30",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "💎 ₹799 — 90 Days",
+                        callback_data="plan_90",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "💎 ₹1999 — 180 Days",
+                        callback_data="plan_180",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🔙 Cancel",
+                        callback_data="main_menu",
+                    )
+                ],
+            ])
+
+            await update.message.reply_text(
+                f"✅ Target ID: `{target_id}`\n\n"
+                "Plan select karein:",
+                parse_mode="Markdown",
+                reply_markup=keyboard,
+            )
+
+        except ValueError:
+
+            await update.message.reply_text(
+                "❌ Valid numeric Telegram User ID bhejein."
+            )
+
+        return
+
+    # Admin plan selection through callback
+    return
+
+
+# ============================================================
+# ADMIN PLAN CALLBACK
+# ============================================================
+
+async def admin_plan_handler(update, context):
+
+    query = update.callback_query
+
+    if query.from_user.id != ADMIN_ID:
+        await query.answer()
+        return
+
+    await query.answer()
+
+    data = query.data
+
+    if not data.startswith("plan_"):
+        return
+
+    try:
+
+        days = int(
             data.split("_")[1]
         )
 
-        set_time_interval(
-            user_id,
-            t_val
+        target_data = admin_sub_target.get(
+            ADMIN_ID,
+            {}
         )
 
-        await query.edit_message_text(
-            f"✅ Time Interval Set to {t_val}s!",
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(
-                        "🔙 Back to Settings",
-                        callback_data="settings"
-                    )
-                ]
-            ])
+        target_id = target_data.get(
+            "target_id"
         )
 
-    # --------------------------------------------------------
-    # CUSTOM SHARE MESSAGE
-    # --------------------------------------------------------
-
-    elif data == "opt_4":
-
-        if user_id != ADMIN_ID:
+        if not target_id:
+            await query.answer(
+                "❌ Target user missing.",
+                show_alert=True,
+            )
             return
 
-        user_login_state[user_id] = {
-            "step": "waiting_custom_msg"
-        }
+        add_premium_subscription(
+            target_id,
+            days=days,
+            plan_type="paid",
+        )
 
-        current_msg = get_custom_share_message(
-            ADMIN_ID
+        admin_sub_target.pop(
+            ADMIN_ID,
+            None,
         )
 
         await query.edit_message_text(
-            f"💬 **Custom Share Message**\n\n"
-            f"Current:\n`{current_msg}`\n\n"
-            "Naya message bhejein:",
+            f"✅ **Subscription Added!**\n\n"
+            f"👤 User ID: `{target_id}`\n"
+            f"💎 Duration: `{days} days`",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton(
-                        "🔙 Back to Settings",
-                        callback_data="settings"
+                        "🔙 Main Menu",
+                        callback_data="main_menu",
                     )
                 ]
-            ])
+            ]),
+        )
+
+    except Exception as e:
+
+        await query.edit_message_text(
+            f"❌ Error: {e}"
         )
 
 
 # ============================================================
-# POST INIT
+# COMMAND SETUP
 # ============================================================
 
 async def post_init(application):
 
-    print("Post-init started...")
+    await application.bot.set_my_commands([
+        BotCommand(
+            "start",
+            "Start AdsNova Pro",
+        ),
+        BotCommand(
+            "menu",
+            "Open Main Menu",
+        ),
+        BotCommand(
+            "status",
+            "Check Status",
+        ),
+        BotCommand(
+            "stop",
+            "Stop configuration",
+        ),
+        BotCommand(
+            "logout",
+            "Account information",
+        ),
+        BotCommand(
+            "admin",
+            "Admin Panel",
+        ),
+        BotCommand(
+            "addsub",
+            "Add Premium",
+        ),
+        BotCommand(
+            "delsub",
+            "Remove Premium",
+        ),
+        BotCommand(
+            "broadcast",
+            "Broadcast Message",
+        ),
+    ])
 
-    try:
-        await set_bot_commands(
-            application
-        )
-
-        print("Bot commands registered.")
-
-    except Exception as e:
-
-        print(
-            f"Bot commands setup error: {e}"
-        )
-
-    try:
-
-        asyncio.create_task(
-            background_forwarder(
-                application
-            )
-        )
-
-        asyncio.create_task(
-            expiry_reminder_worker(
-                application
-            )
-        )
-
-        print(
-            "Background workers started successfully."
-        )
-
-    except Exception as e:
-
-        print(
-            f"Background worker startup error: {e}"
-        )
+    logger.info(
+        "AdsNova Pro bot initialized."
+    )
 
 
 # ============================================================
@@ -3220,107 +1770,105 @@ def main():
     application.add_handler(
         CommandHandler(
             "start",
-            start
+            start,
         )
     )
 
     application.add_handler(
         CommandHandler(
             "menu",
-            start
+            start,
         )
     )
 
     application.add_handler(
         CommandHandler(
             "status",
-            status_command
+            status_command,
         )
     )
 
     application.add_handler(
         CommandHandler(
             "stop",
-            stop_command
+            stop_command,
         )
     )
 
     application.add_handler(
         CommandHandler(
             "logout",
-            logout_command
+            logout_command,
         )
     )
 
     application.add_handler(
         CommandHandler(
             "admin",
-            admin_command
+            admin_command,
         )
     )
 
     application.add_handler(
         CommandHandler(
             "addsub",
-            addsub_command
+            addsub_command,
         )
     )
 
     application.add_handler(
         CommandHandler(
             "delsub",
-            delsub_command
+            delsub_command,
         )
     )
 
     application.add_handler(
         CommandHandler(
-            "userstats",
-            userstats_command
+        "broadcast",
+            broadcast_command,
         )
     )
 
-    application.add_handler(
-        CommandHandler(
-            "broadcast",
-            broadcast_command
-        )
-    )
-
-    # Buttons
+    # Admin plan callbacks
     application.add_handler(
         CallbackQueryHandler(
-            button_handler
+            admin_plan_handler,
+            pattern=r"^plan_\d+$",
         )
     )
 
-    # Text messages
+    # General callbacks
+    application.add_handler(
+        CallbackQueryHandler(
+            button_handler,
+        )
+    )
+
+    # Text
     application.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
-            handle_message
+            handle_message,
         )
     )
 
-    print(
+    logger.info(
         "========================================"
     )
-    print(
-        "AdsNova Pro Pricing Panel Bot"
+    logger.info(
+        "AdsNova Pro Bot Starting..."
     )
-    print(
-        "Bot is starting..."
+    logger.info(
+        "Safe Mode Enabled"
     )
-    print(
-        "Polling mode enabled..."
-    )
-    print(
+    logger.info(
         "========================================"
     )
 
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True
+        drop_pending_updates=True,
     )
 
 
