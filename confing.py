@@ -1,14 +1,8 @@
-import os
-from dotenv import load_dotenv
+API_ID = "YOUR_API_ID"
+API_HASH = "YOUR_API_HASH"
+ADMIN_ID = "YOUR_ADMIN_ID"
+BOT_TOKEN = "YOUR_BOT_TOKEN"
 
-load_dotenv()
-
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-
-# Nayi API ID aur API Hash
-API_ID = 27862122
-API_HASH = "8e770d6182496162316bb773cc5b69e5"
-
-CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "")
-ADMIN_ID = 8453975447
-PREMIUM_PRICE = 400
+BOT_USERNAME = "Automatic_posttbot"
+FORCE_CHANNEL_USERNAME = "@iqra_music_support"
+ADMIN_CONTACT_USERNAME = "AdsNova0"
