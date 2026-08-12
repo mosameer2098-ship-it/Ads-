@@ -24,6 +24,8 @@ from config import (
     BOT_USERNAME,
     FORCE_CHANNEL_USERNAME,
     ADMIN_CONTACT_USERNAME,
+    API_ID,
+    API_HASH,
 )
 
 from database import (
@@ -49,6 +51,12 @@ from database import (
     claim_referral_reward,
 )
 
+from keyboard import get_main_keyboard
+
+from login import (
+    handle_login_message,
+)
+
 
 # ============================================================
 # LOGGING
@@ -68,6 +76,9 @@ logger = logging.getLogger(__name__)
 
 user_languages = {}
 admin_sub_target = {}
+
+# Login states login.py ke saath shared rahenge.
+user_login_state = {}
 
 forwarded_counts = {}
 failed_counts = {}
@@ -101,7 +112,6 @@ def subscription_label(user_id):
         return "Lifetime (Admin) ♾️"
 
     try:
-
         conn = sqlite3.connect("bot_database.db")
         cursor = conn.cursor()
 
@@ -114,9 +124,7 @@ def subscription_label(user_id):
             """,
             (
                 user_id,
-                datetime.now().strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                ),
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             ),
         )
 
@@ -124,18 +132,13 @@ def subscription_label(user_id):
         conn.close()
 
         if row:
-
             if row[0] in ("referral", "trial"):
                 return "Free Referral Trial 🎁"
 
             return "Paid Premium 💎"
 
     except Exception as e:
-
-        logger.warning(
-            "Subscription label error: %s",
-            e,
-        )
+        logger.warning("Subscription label error: %s", e)
 
     return "Inactive ❌"
 
@@ -153,7 +156,6 @@ async def check_membership(user_id, context):
         return True
 
     try:
-
         member = await context.bot.get_chat_member(
             chat_id=FORCE_CHANNEL_USERNAME,
             user_id=user_id,
@@ -166,7 +168,6 @@ async def check_membership(user_id, context):
         )
 
     except Exception as e:
-
         logger.warning(
             "Membership check failed for %s: %s",
             user_id,
@@ -206,7 +207,6 @@ async def show_join_required(update, context):
     ])
 
     if update.callback_query:
-
         await update.callback_query.edit_message_text(
             text,
             parse_mode="Markdown",
@@ -214,7 +214,6 @@ async def show_join_required(update, context):
         )
 
     elif update.message:
-
         await update.message.reply_text(
             text,
             parse_mode="Markdown",
@@ -250,7 +249,6 @@ async def show_subscription_required(update, context):
     ])
 
     if update.callback_query:
-
         await update.callback_query.edit_message_text(
             text,
             parse_mode="Markdown",
@@ -258,7 +256,6 @@ async def show_subscription_required(update, context):
         )
 
     elif update.message:
-
         await update.message.reply_text(
             text,
             parse_mode="Markdown",
@@ -267,66 +264,7 @@ async def show_subscription_required(update, context):
 
 
 # ============================================================
-# MAIN KEYBOARD
-# ============================================================
-
-def main_keyboard(user_id):
-
-    lang = user_languages.get(
-        user_id,
-        "hi",
-    )
-
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "📊 Live Analytics Status",
-                callback_data="status",
-            ),
-            InlineKeyboardButton(
-                "⚙️ Settings",
-                callback_data="settings",
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                "💎 Subscription Details",
-                callback_data="subscription",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🎁 Free Trial (Referral)",
-                callback_data="referral_info",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                (
-                    "🌐 Language: English"
-                    if lang == "en"
-                    else "🌐 Language: Hinglish"
-                ),
-                callback_data="toggle_lang",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "✨ Refresh",
-                callback_data="refresh",
-            ),
-            InlineKeyboardButton(
-                "🛠️ Help Centre",
-                callback_data="help_centre",
-            ),
-        ],
-    ]
-
-    return InlineKeyboardMarkup(keyboard)
-
-
-# ============================================================
-# START
+# MAIN MENU
 # ============================================================
 
 async def start(update, context):
@@ -338,10 +276,6 @@ async def start(update, context):
 
     save_user(user)
 
-    # --------------------------------------------------------
-    # REFERRAL
-    # --------------------------------------------------------
-
     if context.args:
 
         arg = context.args[0]
@@ -349,7 +283,6 @@ async def start(update, context):
         if arg.startswith("ref_"):
 
             try:
-
                 referrer_id = int(
                     arg.split("_", 1)[1]
                 )
@@ -372,15 +305,10 @@ async def start(update, context):
                         )
 
             except Exception as e:
-
                 logger.warning(
                     "Referral error: %s",
                     e,
                 )
-
-    # --------------------------------------------------------
-    # FORCE JOIN
-    # --------------------------------------------------------
 
     if not await check_membership(
         user.id,
@@ -394,10 +322,6 @@ async def start(update, context):
 
         return
 
-    # --------------------------------------------------------
-    # MAIN MENU
-    # --------------------------------------------------------
-
     text = (
         "💎 **AdsNova Pro Bot** 💎\n\n"
         "✨ Premium Automation Service\n"
@@ -407,7 +331,10 @@ async def start(update, context):
         "👇 **Main Menu:**"
     )
 
-    keyboard = main_keyboard(user.id)
+    keyboard = await get_main_keyboard(
+        user.id,
+        user_languages,
+    )
 
     if update.callback_query:
 
@@ -564,72 +491,6 @@ async def status_command(update, context):
 
 
 # ============================================================
-# STOP
-# ============================================================
-
-async def stop_command(update, context):
-
-    user_id = update.effective_user.id
-
-    if not await check_membership(
-        user_id,
-        context,
-    ):
-        return
-
-    if not has_access(user_id):
-        return
-
-    slot = get_active_slot(user_id)
-
-    if not get_slot_session(
-        user_id,
-        slot,
-    ):
-
-        await update.message.reply_text(
-            "ℹ️ Abhi koi configured account slot nahi hai."
-        )
-
-        return
-
-    set_slot_stopped(
-        user_id,
-        slot,
-        1,
-    )
-
-    await update.message.reply_text(
-        f"🛑 Slot {slot} stopped successfully."
-    )
-
-
-# ============================================================
-# LOGOUT
-# ============================================================
-
-async def logout_command(update, context):
-
-    user_id = update.effective_user.id
-
-    if not await check_membership(
-        user_id,
-        context,
-    ):
-        return
-
-    if not has_access(user_id):
-        return
-
-    await update.message.reply_text(
-        "ℹ️ Account login/logout ko is safe version "
-        "me bot ke through handle nahi kiya jata.\n\n"
-        "Aap Settings me apna forwarding configuration "
-        "manage kar sakte hain."
-    )
-
-
-# ============================================================
 # SUBSCRIPTION
 # ============================================================
 
@@ -713,8 +574,7 @@ async def referral_page(update, context):
     user_id = update.effective_user.id
 
     username = (
-        BOT_USERNAME
-        or "your_bot"
+        BOT_USERNAME or "your_bot"
     ).replace("@", "")
 
     link = (
@@ -815,7 +675,6 @@ async def settings_page(update, context):
 async def source_channel_page(update, context):
 
     user_id = update.effective_user.id
-
     channels = get_user_channels(user_id)
 
     if not channels:
@@ -868,7 +727,6 @@ async def source_channel_page(update, context):
 async def groups_page(update, context):
 
     user_id = update.effective_user.id
-
     groups = get_user_groups(user_id)
 
     if not groups:
@@ -926,7 +784,7 @@ async def groups_page(update, context):
 
 
 # ============================================================
-# TIME SETTINGS
+# TIME
 # ============================================================
 
 async def time_page(update, context):
@@ -1016,6 +874,311 @@ async def help_page(update, context):
 
 
 # ============================================================
+# SLOT HELPERS
+# ============================================================
+
+async def slot_login_start(
+    update,
+    context,
+    slot_num,
+):
+
+    user_id = update.effective_user.id
+
+    user_login_state[user_id] = {
+        "step": "waiting_phone",
+        "slot_number": slot_num,
+    }
+
+    await update.callback_query.edit_message_text(
+        f"🔐 **Login Slot {slot_num}**\n\n"
+        "Apna Telegram phone number bhejein.\n\n"
+        "Example:\n"
+        "`+919876543210`",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "❌ Cancel",
+                    callback_data="cancel_login",
+                )
+            ]
+        ]),
+    )
+
+
+async def slot_menu(update, context):
+
+    user_id = update.effective_user.id
+
+    active_slot = get_active_slot(user_id)
+
+    slots = []
+
+    for slot_num in range(1, 6):
+
+        session = get_slot_session(
+            user_id,
+            slot_num,
+        )
+
+        if session:
+            name = session[2] or f"Slot {slot_num}"
+            stopped = session[3]
+
+            status = (
+                "🛑 Stopped"
+                if stopped
+                else "🟢 Active"
+            )
+
+            slots.append([
+                InlineKeyboardButton(
+                    f"📂 Slot {slot_num} — {name} {status}",
+                    callback_data=f"switch_slot_{slot_num}",
+                )
+            ])
+
+        else:
+
+            slots.append([
+                InlineKeyboardButton(
+                    f"🔑 Login Slot {slot_num}",
+                    callback_data=f"slot_click_{slot_num}",
+                )
+            ])
+
+    slots.append([
+        InlineKeyboardButton(
+            "🔙 Back to Menu",
+            callback_data="main_menu",
+        )
+    ])
+
+    await update.callback_query.edit_message_text(
+        "👤 **Account Slots**\n\n"
+        f"📂 Active Slot: `{active_slot}`\n\n"
+        "Apna account slot select karein:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(slots),
+    )
+
+
+# ============================================================
+# SLOT CALLBACKS
+# ============================================================
+
+async def handle_slot_callback(
+    update,
+    context,
+    data,
+):
+
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    if data == "account_slots":
+
+        await slot_menu(
+            update,
+            context,
+        )
+
+        return True
+
+    if data == "cancel_login":
+
+        state = user_login_state.pop(
+            user_id,
+            None,
+        )
+
+        if state:
+
+            client = state.get("client")
+
+            if client:
+
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+
+        await start(
+            update,
+            context,
+        )
+
+        return True
+
+    if data.startswith("slot_click_"):
+
+        try:
+
+            slot_num = int(
+                data.rsplit("_", 1)[1]
+            )
+
+        except ValueError:
+
+            await query.answer(
+                "Invalid slot.",
+                show_alert=True,
+            )
+
+            return True
+
+        await slot_login_start(
+            update,
+            context,
+            slot_num,
+        )
+
+        return True
+
+    if data.startswith("switch_slot_"):
+
+        try:
+
+            slot_num = int(
+                data.rsplit("_", 1)[1]
+            )
+
+        except ValueError:
+
+            return True
+
+        session = get_slot_session(
+            user_id,
+            slot_num,
+        )
+
+        if not session:
+
+            await query.answer(
+                "❌ Slot empty.",
+                show_alert=True,
+            )
+
+            return True
+
+        # set_active_slot database function import nahi
+        # kiya gaya hai, isliye keyboard ke active slot
+        # flow ko database ke existing function ke through
+        # safely handle karna hoga.
+        #
+        # Agar database.py me set_active_slot available hai,
+        # to dynamically import kar rahe hain.
+
+        try:
+
+            from database import set_active_slot
+
+            set_active_slot(
+                user_id,
+                slot_num,
+            )
+
+        except Exception as e:
+
+            await query.answer(
+                f"❌ Slot switch error: {e}",
+                show_alert=True,
+            )
+
+            return True
+
+        await query.answer(
+            f"✅ Slot {slot_num} active ho gaya.",
+            show_alert=True,
+        )
+
+        await start(
+            update,
+            context,
+        )
+
+        return True
+
+    if data.startswith("start_slot_"):
+
+        try:
+
+            slot_num = int(
+                data.rsplit("_", 1)[1]
+            )
+
+            set_slot_stopped(
+                user_id,
+                slot_num,
+                0,
+            )
+
+            await query.answer(
+                f"🟢 Slot {slot_num} started.",
+                show_alert=True,
+            )
+
+            await start(
+                update,
+                context,
+            )
+
+        except Exception as e:
+
+            await query.answer(
+                f"❌ Error: {e}",
+                show_alert=True,
+            )
+
+        return True
+
+    if data.startswith("stop_slot_"):
+
+        try:
+
+            slot_num = int(
+                data.rsplit("_", 1)[1]
+            )
+
+            set_slot_stopped(
+                user_id,
+                slot_num,
+                1,
+            )
+
+            await query.answer(
+                f"🛑 Slot {slot_num} stopped.",
+                show_alert=True,
+            )
+
+            await start(
+                update,
+                context,
+            )
+
+        except Exception as e:
+
+            await query.answer(
+                f"❌ Error: {e}",
+                show_alert=True,
+            )
+
+        return True
+
+    if data == "logout_acc":
+
+        await query.answer(
+            "Logout feature ko next step me connect karenge.",
+            show_alert=True,
+        )
+
+        return True
+
+    return False
+
+
+# ============================================================
 # ADMIN PANEL
 # ============================================================
 
@@ -1053,7 +1216,7 @@ async def admin_command(update, context):
 
 
 # ============================================================
-# ADD SUB
+# ADD / DELETE SUB
 # ============================================================
 
 async def addsub_command(update, context):
@@ -1064,8 +1227,7 @@ async def addsub_command(update, context):
     if not context.args:
 
         await update.message.reply_text(
-            "Usage:\n"
-            "`/addsub USER_ID DAYS`",
+            "Usage:\n`/addsub USER_ID DAYS`",
             parse_mode="Markdown",
         )
 
@@ -1082,9 +1244,7 @@ async def addsub_command(update, context):
         )
 
         if days <= 0:
-            raise ValueError(
-                "Days must be greater than 0."
-            )
+            raise ValueError("Days must be greater than 0.")
 
         add_premium_subscription(
             target,
@@ -1093,8 +1253,7 @@ async def addsub_command(update, context):
         )
 
         await update.message.reply_text(
-            f"✅ User `{target}` ko {days} days "
-            "premium de diya gaya.",
+            f"✅ User `{target}` ko {days} days premium de diya gaya.",
             parse_mode="Markdown",
         )
 
@@ -1105,10 +1264,6 @@ async def addsub_command(update, context):
         )
 
 
-# ============================================================
-# DELETE SUB
-# ============================================================
-
 async def delsub_command(update, context):
 
     if not is_admin(update.effective_user.id):
@@ -1117,8 +1272,7 @@ async def delsub_command(update, context):
     if not context.args:
 
         await update.message.reply_text(
-            "Usage:\n"
-            "`/delsub USER_ID`",
+            "Usage:\n`/delsub USER_ID`",
             parse_mode="Markdown",
         )
 
@@ -1153,10 +1307,7 @@ async def admin_stats(update, context):
 
     try:
 
-        conn = sqlite3.connect(
-            "bot_database.db"
-        )
-
+        conn = sqlite3.connect("bot_database.db")
         cursor = conn.cursor()
 
         cursor.execute(
@@ -1233,8 +1384,7 @@ async def broadcast_command(update, context):
     if not context.args:
 
         await update.message.reply_text(
-            "Usage:\n"
-            "`/broadcast Your message`",
+            "Usage:\n`/broadcast Your message`",
             parse_mode="Markdown",
         )
 
@@ -1242,10 +1392,7 @@ async def broadcast_command(update, context):
 
     message = " ".join(context.args)
 
-    conn = sqlite3.connect(
-        "bot_database.db"
-    )
-
+    conn = sqlite3.connect("bot_database.db")
     cursor = conn.cursor()
 
     cursor.execute(
@@ -1271,10 +1418,7 @@ async def broadcast_command(update, context):
             sent += 1
 
             forwarded_counts[ADMIN_ID] = (
-                forwarded_counts.get(
-                    ADMIN_ID,
-                    0
-                ) + 1
+                forwarded_counts.get(ADMIN_ID, 0) + 1
             )
 
             await asyncio.sleep(0.05)
@@ -1284,10 +1428,7 @@ async def broadcast_command(update, context):
             failed += 1
 
             failed_counts[ADMIN_ID] = (
-                failed_counts.get(
-                    ADMIN_ID,
-                    0
-                ) + 1
+                failed_counts.get(ADMIN_ID, 0) + 1
             )
 
     await update.message.reply_text(
@@ -1304,14 +1445,57 @@ async def broadcast_command(update, context):
 async def button_handler(update, context):
 
     query = update.callback_query
-
-    await query.answer()
-
     data = query.data
     user_id = query.from_user.id
 
+    # Slot callbacks ko membership/access check se
+    # pehle handle karna zaroori hai.
+    if data.startswith((
+        "slot_click_",
+        "switch_slot_",
+        "start_slot_",
+        "stop_slot_",
+    )) or data in (
+        "account_slots",
+        "cancel_login",
+        "logout_acc",
+    ):
+
+        await query.answer()
+
+        if not await check_membership(
+            user_id,
+            context,
+        ):
+
+            await show_join_required(
+                update,
+                context,
+            )
+
+            return
+
+        if not has_access(user_id):
+
+            await show_subscription_required(
+                update,
+                context,
+            )
+
+            return
+
+        await handle_slot_callback(
+            update,
+            context,
+            data,
+        )
+
+        return
+
+    await query.answer()
+
     # --------------------------------------------------------
-    # CHECK MEMBERSHIP
+    # MEMBERSHIP
     # --------------------------------------------------------
 
     if data == "check_membership":
@@ -1376,7 +1560,7 @@ async def button_handler(update, context):
         return
 
     # --------------------------------------------------------
-    # MAIN MENU
+    # MAIN
     # --------------------------------------------------------
 
     if data == "main_menu":
@@ -1388,10 +1572,6 @@ async def button_handler(update, context):
 
         return
 
-    # --------------------------------------------------------
-    # SUBSCRIPTION
-    # --------------------------------------------------------
-
     if data == "subscription":
 
         await subscription_page(
@@ -1400,10 +1580,6 @@ async def button_handler(update, context):
         )
 
         return
-
-    # --------------------------------------------------------
-    # REFERRAL
-    # --------------------------------------------------------
 
     if data == "referral_info":
 
@@ -1414,10 +1590,6 @@ async def button_handler(update, context):
 
         return
 
-    # --------------------------------------------------------
-    # HELP
-    # --------------------------------------------------------
-
     if data == "help_centre":
 
         await help_page(
@@ -1426,10 +1598,6 @@ async def button_handler(update, context):
         )
 
         return
-
-    # --------------------------------------------------------
-    # REFRESH
-    # --------------------------------------------------------
 
     if data == "refresh":
 
@@ -1441,7 +1609,7 @@ async def button_handler(update, context):
         return
 
     # --------------------------------------------------------
-    # PREMIUM ACCESS
+    # PREMIUM
     # --------------------------------------------------------
 
     if not has_access(user_id):
@@ -1480,7 +1648,7 @@ async def button_handler(update, context):
         return
 
     # --------------------------------------------------------
-    # SOURCE CHANNEL
+    # SOURCE
     # --------------------------------------------------------
 
     if data == "opt_1":
@@ -1500,9 +1668,7 @@ async def button_handler(update, context):
                 data.split("_", 1)[1]
             )
 
-            channels = get_user_channels(
-                user_id
-            )
+            channels = get_user_channels(user_id)
 
             if index >= len(channels):
 
@@ -1558,7 +1724,7 @@ async def button_handler(update, context):
 
             group_id = data.split(
                 "group_",
-                1
+                1,
             )[1]
 
             toggle_group_selection(
@@ -1629,11 +1795,6 @@ async def button_handler(update, context):
                 data.split("_", 1)[1]
             )
 
-            if seconds <= 0:
-                raise ValueError(
-                    "Invalid interval"
-                )
-
             set_time_interval(
                 user_id,
                 seconds,
@@ -1688,7 +1849,7 @@ async def button_handler(update, context):
         return
 
     # --------------------------------------------------------
-    # ADMIN SUBSCRIPTION
+    # ADMIN
     # --------------------------------------------------------
 
     if data == "admin_sub":
@@ -1718,10 +1879,6 @@ async def button_handler(update, context):
 
         return
 
-    # --------------------------------------------------------
-    # ADMIN STATS
-    # --------------------------------------------------------
-
     if data == "admin_stats":
 
         if not is_admin(user_id):
@@ -1731,6 +1888,71 @@ async def button_handler(update, context):
             update,
             context,
         )
+
+        return
+
+    # --------------------------------------------------------
+    # ADMIN PLAN
+    # --------------------------------------------------------
+
+    if data.startswith("plan_"):
+
+        if not is_admin(user_id):
+            return
+
+        try:
+
+            days = int(
+                data.split("_", 1)[1]
+            )
+
+            target_data = admin_sub_target.get(
+                user_id,
+                {},
+            )
+
+            target_id = target_data.get(
+                "target_id"
+            )
+
+            if not target_id:
+                await query.answer(
+                    "❌ Target user missing.",
+                    show_alert=True,
+                )
+                return
+
+            add_premium_subscription(
+                target_id,
+                days=days,
+                plan_type="paid",
+            )
+
+            admin_sub_target.pop(
+                user_id,
+                None,
+            )
+
+            await query.edit_message_text(
+                f"✅ **Subscription Added!**\n\n"
+                f"👤 User ID: `{target_id}`\n"
+                f"💎 Duration: `{days} days`",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            "🔙 Main Menu",
+                            callback_data="main_menu",
+                        )
+                    ]
+                ]),
+            )
+
+        except Exception as e:
+
+            await query.edit_message_text(
+                f"❌ Error: {e}"
+            )
 
         return
 
@@ -1753,7 +1975,21 @@ async def handle_message(update, context):
     text = update.message.text.strip()
 
     # --------------------------------------------------------
-    # ADMIN SUBSCRIPTION TARGET
+    # LOGIN FLOW
+    # --------------------------------------------------------
+
+    if user_id in user_login_state:
+
+        await handle_login_message(
+            update,
+            context,
+            user_login_state,
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # ADMIN SUBSCRIPTION
     # --------------------------------------------------------
 
     if (
@@ -1819,139 +2055,24 @@ async def handle_message(update, context):
 
 
 # ============================================================
-# ADMIN PLAN CALLBACK
-# ============================================================
-
-async def admin_plan_handler(update, context):
-
-    query = update.callback_query
-
-    if query.from_user.id != ADMIN_ID:
-
-        await query.answer(
-            "❌ Not authorized.",
-            show_alert=True,
-        )
-
-        return
-
-    await query.answer()
-
-    data = query.data
-
-    if not data.startswith("plan_"):
-        return
-
-    try:
-
-        days = int(
-            data.split("_", 1)[1]
-        )
-
-        if days <= 0:
-            raise ValueError(
-                "Invalid duration"
-            )
-
-        target_data = admin_sub_target.get(
-            ADMIN_ID,
-            {}
-        )
-
-        target_id = target_data.get(
-            "target_id"
-        )
-
-        if not target_id:
-
-            await query.answer(
-                "❌ Target user missing.",
-                show_alert=True,
-            )
-
-            return
-
-        add_premium_subscription(
-            target_id,
-            days=days,
-            plan_type="paid",
-        )
-
-        admin_sub_target.pop(
-            ADMIN_ID,
-            None,
-        )
-
-        await query.edit_message_text(
-            f"✅ **Subscription Added!**\n\n"
-            f"👤 User ID: `{target_id}`\n"
-            f"💎 Duration: `{days} days`",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(
-                        "🔙 Main Menu",
-                        callback_data="main_menu",
-                    )
-                ]
-            ]),
-        )
-
-    except Exception as e:
-
-        await query.edit_message_text(
-            f"❌ Error: {e}"
-        )
-
-
-# ============================================================
 # COMMAND SETUP
 # ============================================================
 
 async def post_init(application):
 
     await application.bot.set_my_commands([
-        BotCommand(
-            "start",
-            "Start AdsNova Pro",
-        ),
-        BotCommand(
-            "menu",
-            "Open Main Menu",
-        ),
-        BotCommand(
-            "status",
-            "Check Status",
-        ),
-        BotCommand(
-            "stop",
-            "Stop forwarding",
-        ),
-        BotCommand(
-            "logout",
-            "Account information",
-        ),
-        BotCommand(
-            "admin",
-            "Admin Panel",
-        ),
-        BotCommand(
-            "addsub",
-            "Add Premium",
-        ),
-        BotCommand(
-            "delsub",
-            "Remove Premium",
-        ),
-        BotCommand(
-            "broadcast",
-            "Broadcast Message",
-        ),
+        BotCommand("start", "Start AdsNova Pro"),
+        BotCommand("menu", "Open Main Menu"),
+        BotCommand("status", "Check Status"),
+        BotCommand("stop", "Stop forwarding"),
+        BotCommand("logout", "Account information"),
+        BotCommand("admin", "Admin Panel"),
+        BotCommand("addsub", "Add Premium"),
+        BotCommand("delsub", "Remove Premium"),
+        BotCommand("broadcast", "Broadcast Message"),
     ])
 
-    logger.info(
-        "AdsNova Pro bot initialized."
-    )
+    logger.info("AdsNova Pro bot initialized.")
 
 
 # ============================================================
@@ -1972,97 +2093,47 @@ def build_application():
         .build()
     )
 
-    # --------------------------------------------------------
-    # COMMANDS
-    # --------------------------------------------------------
-
     application.add_handler(
-        CommandHandler(
-            "start",
-            start,
-        )
+        CommandHandler("start", start)
     )
 
     application.add_handler(
-        CommandHandler(
-            "menu",
-            start,
-        )
+        CommandHandler("menu", start)
     )
 
     application.add_handler(
-        CommandHandler(
-            "status",
-            status_command,
-        )
+        CommandHandler("status", status_command)
     )
 
     application.add_handler(
-        CommandHandler(
-            "stop",
-            stop_command,
-        )
+        CommandHandler("stop", stop_command)
     )
 
     application.add_handler(
-        CommandHandler(
-            "logout",
-            logout_command,
-        )
+        CommandHandler("logout", logout_command)
     )
 
     application.add_handler(
-        CommandHandler(
-            "admin",
-            admin_command,
-        )
+        CommandHandler("admin", admin_command)
     )
 
     application.add_handler(
-        CommandHandler(
-            "addsub",
-            addsub_command,
-        )
+        CommandHandler("addsub", addsub_command)
     )
 
     application.add_handler(
-        CommandHandler(
-            "delsub",
-            delsub_command,
-        )
+        CommandHandler("delsub", delsub_command)
     )
 
     application.add_handler(
-        CommandHandler(
-            "broadcast",
-            broadcast_command,
-        )
+        CommandHandler("broadcast", broadcast_command)
     )
-
-    # --------------------------------------------------------
-    # ADMIN PLAN CALLBACK
-    # --------------------------------------------------------
 
     application.add_handler(
         CallbackQueryHandler(
-            admin_plan_handler,
-            pattern=r"^plan_\d+$",
+            button_handler
         )
     )
-
-    # --------------------------------------------------------
-    # GENERAL CALLBACKS
-    # --------------------------------------------------------
-
-    application.add_handler(
-        CallbackQueryHandler(
-            button_handler,
-        )
-    )
-
-    # --------------------------------------------------------
-    # TEXT
-    # --------------------------------------------------------
 
     application.add_handler(
         MessageHandler(
@@ -2132,7 +2203,7 @@ async def start_background_workers(application):
 
 
 # ============================================================
-# ASYNC RUNNER
+# RUN BOT
 # ============================================================
 
 async def run_bot():
@@ -2163,10 +2234,6 @@ async def run_bot():
 
         await application.initialize()
 
-        await post_init(
-            application
-        )
-
         await application.start()
 
         await application.updater.start_polling(
@@ -2181,19 +2248,7 @@ async def run_bot():
         )
 
         logger.info(
-            "========================================"
-        )
-
-        logger.info(
             "AdsNova Pro Bot is ONLINE ✅"
-        )
-
-        logger.info(
-            "Telegram polling started successfully."
-        )
-
-        logger.info(
-            "========================================"
         )
 
         await asyncio.Event().wait()
@@ -2215,10 +2270,6 @@ async def run_bot():
 
     finally:
 
-        logger.info(
-            "Stopping AdsNova Pro Bot..."
-        )
-
         for task in worker_tasks:
 
             if not task.done():
@@ -2232,29 +2283,19 @@ async def run_bot():
             )
 
         try:
-
             if application.updater:
-
                 await application.updater.stop()
-
         except Exception:
-
             pass
 
         try:
-
             await application.stop()
-
         except Exception:
-
             pass
 
         try:
-
             await application.shutdown()
-
         except Exception:
-
             pass
 
         logger.info(
