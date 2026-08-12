@@ -87,6 +87,29 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS active_slots (
+            user_id INTEGER PRIMARY KEY,
+            slot_number INTEGER DEFAULT 1
+        )
+    """)
+
+    # Last processed message ID.
+    # Isse same message har cycle mein dobara send nahi hoga.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS forwarding_state (
+            user_id INTEGER,
+            slot_number INTEGER,
+            source_channel_id INTEGER,
+            last_message_id INTEGER DEFAULT 0,
+            PRIMARY KEY (
+                user_id,
+                slot_number,
+                source_channel_id
+            )
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -102,13 +125,30 @@ def save_user(user):
 
     cursor.execute("""
         INSERT OR IGNORE INTO users
-        (user_id, username, first_name, created_at)
+        (
+            user_id,
+            username,
+            first_name,
+            created_at
+        )
         VALUES (?, ?, ?, ?)
     """, (
         user.id,
         user.username,
         user.first_name,
         datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ))
+
+    # Existing user ki information bhi update rahe.
+    cursor.execute("""
+        UPDATE users
+        SET username = ?,
+            first_name = ?
+        WHERE user_id = ?
+    """, (
+        user.username,
+        user.first_name,
+        user.id
     ))
 
     conn.commit()
@@ -137,6 +177,7 @@ def is_premium(user_id):
         return False
 
     try:
+
         expiry = datetime.strptime(
             row["expiry_date"],
             "%Y-%m-%d %H:%M:%S"
@@ -206,6 +247,26 @@ def get_remaining_days(user_id):
         return "N/A"
 
 
+def get_subscription_plan(user_id):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT plan_type
+        FROM subscriptions
+        WHERE user_id = ?
+    """, (user_id,))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    if row:
+        return row["plan_type"]
+
+    return None
+
+
 def add_premium_subscription(
     user_id,
     days=30,
@@ -228,6 +289,7 @@ def add_premium_subscription(
     if row:
 
         try:
+
             old_expiry = datetime.strptime(
                 row["expiry_date"],
                 "%Y-%m-%d %H:%M:%S"
@@ -239,16 +301,22 @@ def add_premium_subscription(
                 start_date = now
 
         except Exception:
+
             start_date = now
 
     else:
+
         start_date = now
 
     expiry = start_date + timedelta(days=days)
 
     cursor.execute("""
         INSERT OR REPLACE INTO subscriptions
-        (user_id, expiry_date, plan_type)
+        (
+            user_id,
+            expiry_date,
+            plan_type
+        )
         VALUES (?, ?, ?)
     """, (
         user_id,
@@ -293,6 +361,7 @@ def get_bot_config(user_id):
     conn.close()
 
     if row:
+
         return (
             row["source_channel"],
             row["time_interval"]
@@ -308,15 +377,25 @@ def set_source_channel(user_id, channel_name):
 
     cursor.execute("""
         INSERT OR IGNORE INTO bot_config
-        (user_id, source_channel, time_interval)
+        (
+            user_id,
+            source_channel,
+            time_interval
+        )
         VALUES (?, ?, 30)
-    """, (user_id, channel_name))
+    """, (
+        user_id,
+        channel_name
+    ))
 
     cursor.execute("""
         UPDATE bot_config
         SET source_channel = ?
         WHERE user_id = ?
-    """, (channel_name, user_id))
+    """, (
+        channel_name,
+        user_id
+    ))
 
     conn.commit()
     conn.close()
@@ -329,15 +408,25 @@ def set_time_interval(user_id, interval):
 
     cursor.execute("""
         INSERT OR IGNORE INTO bot_config
-        (user_id, source_channel, time_interval)
+        (
+            user_id,
+            source_channel,
+            time_interval
+        )
         VALUES (?, NULL, ?)
-    """, (user_id, interval))
+    """, (
+        user_id,
+        interval
+    ))
 
     cursor.execute("""
         UPDATE bot_config
         SET time_interval = ?
         WHERE user_id = ?
-    """, (interval, user_id))
+    """, (
+        interval,
+        user_id
+    ))
 
     conn.commit()
     conn.close()
@@ -380,18 +469,31 @@ def toggle_group_selection(
     conn = get_connection()
     cursor = conn.cursor()
 
+    try:
+        group_id = int(group_id)
+    except (TypeError, ValueError):
+        conn.close()
+        return
+
     cursor.execute("""
         SELECT selected
         FROM groups
         WHERE user_id = ?
         AND group_id = ?
-    """, (user_id, group_id))
+    """, (
+        user_id,
+        group_id
+    ))
 
     row = cursor.fetchone()
 
     if row:
 
-        new_value = 0 if row["selected"] else 1
+        new_value = (
+            0
+            if row["selected"]
+            else 1
+        )
 
         cursor.execute("""
             UPDATE groups
@@ -421,7 +523,7 @@ def set_all_groups_selection(
         SET selected = ?
         WHERE user_id = ?
     """, (
-        value,
+        int(value),
         user_id
     ))
 
@@ -467,13 +569,6 @@ def get_active_slot(user_id):
     cursor = conn.cursor()
 
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS active_slots (
-            user_id INTEGER PRIMARY KEY,
-            slot_number INTEGER DEFAULT 1
-        )
-    """)
-
-    cursor.execute("""
         SELECT slot_number
         FROM active_slots
         WHERE user_id = ?
@@ -485,13 +580,17 @@ def get_active_slot(user_id):
 
         cursor.execute("""
             INSERT INTO active_slots
-            (user_id, slot_number)
+            (
+                user_id,
+                slot_number
+            )
             VALUES (?, 1)
         """, (user_id,))
 
         slot = 1
 
     else:
+
         slot = row["slot_number"]
 
     conn.commit()
@@ -509,15 +608,11 @@ def set_active_slot(
     cursor = conn.cursor()
 
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS active_slots (
-            user_id INTEGER PRIMARY KEY,
-            slot_number INTEGER DEFAULT 1
-        )
-    """)
-
-    cursor.execute("""
         INSERT OR REPLACE INTO active_slots
-        (user_id, slot_number)
+        (
+            user_id,
+            slot_number
+        )
         VALUES (?, ?)
     """, (
         user_id,
@@ -668,7 +763,7 @@ def set_slot_stopped(
         WHERE user_id = ?
         AND slot_number = ?
     """, (
-        stopped,
+        int(stopped),
         user_id,
         slot_number
     ))
@@ -690,7 +785,7 @@ def save_real_groups_and_channels(
     conn = get_connection()
     cursor = conn.cursor()
 
-    # Existing selected groups ko preserve karna
+    # Existing selected groups preserve karo.
     old_selected = {}
 
     cursor.execute("""
@@ -700,7 +795,10 @@ def save_real_groups_and_channels(
     """, (user_id,))
 
     for row in cursor.fetchall():
-        old_selected[row["group_id"]] = row["selected"]
+
+        old_selected[
+            row["group_id"]
+        ] = row["selected"]
 
     cursor.execute("""
         DELETE FROM groups
@@ -716,11 +814,16 @@ def save_real_groups_and_channels(
 
         cursor.execute("""
             INSERT OR REPLACE INTO groups
-            (user_id, group_id, group_name, selected)
+            (
+                user_id,
+                group_id,
+                group_name,
+                selected
+            )
             VALUES (?, ?, ?, ?)
         """, (
             user_id,
-            group_id,
+            int(group_id),
             group_name,
             selected
         ))
@@ -734,11 +837,15 @@ def save_real_groups_and_channels(
 
         cursor.execute("""
             INSERT OR REPLACE INTO channels
-            (user_id, channel_id, channel_name)
+            (
+                user_id,
+                channel_id,
+                channel_name
+            )
             VALUES (?, ?, ?)
         """, (
             user_id,
-            channel_id,
+            int(channel_id),
             channel_name
         ))
 
@@ -768,6 +875,96 @@ def get_custom_share_message(user_id):
         return row["custom_share_message"]
 
     return "🚀 AdsNova Pro"
+
+
+def set_custom_share_message(
+    user_id,
+    message
+):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT OR REPLACE INTO user_settings
+        (
+            user_id,
+            custom_share_message
+        )
+        VALUES (?, ?)
+    """, (
+        user_id,
+        message
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+# ============================================================
+# FORWARDING STATE
+# ============================================================
+
+def get_last_message_id(
+    user_id,
+    slot_number,
+    source_channel_id
+):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT last_message_id
+        FROM forwarding_state
+        WHERE user_id = ?
+        AND slot_number = ?
+        AND source_channel_id = ?
+    """, (
+        user_id,
+        slot_number,
+        int(source_channel_id)
+    ))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        return 0
+
+    return int(
+        row["last_message_id"] or 0
+    )
+
+
+def set_last_message_id(
+    user_id,
+    slot_number,
+    source_channel_id,
+    message_id
+):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT OR REPLACE INTO forwarding_state
+        (
+            user_id,
+            slot_number,
+            source_channel_id,
+            last_message_id
+        )
+        VALUES (?, ?, ?, ?)
+    """, (
+        user_id,
+        slot_number,
+        int(source_channel_id),
+        int(message_id)
+    ))
+
+    conn.commit()
+    conn.close()
 
 
 # ============================================================
