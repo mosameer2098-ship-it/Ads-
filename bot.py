@@ -1877,12 +1877,20 @@ async def help_page(update, context):
 # ============================================================
 
 async def admin_command(update, context):
+    if not update.effective_user:
+        return
+
     if not is_admin(
         update.effective_user.id
     ):
         return
 
-    await update.message.reply_text(
+    message = update.effective_message
+
+    if message is None:
+        return
+
+    await message.reply_text(
         "👑 **AdsNova Pro Admin Panel**",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
@@ -1909,13 +1917,21 @@ async def admin_command(update, context):
 
 
 async def addsub_command(update, context):
+    if not update.effective_user:
+        return
+
     if not is_admin(
         update.effective_user.id
     ):
         return
 
+    message = update.effective_message
+
+    if message is None:
+        return
+
     if not context.args:
-        await update.message.reply_text(
+        await message.reply_text(
             "Usage:\n`/addsub USER_ID DAYS`",
             parse_mode="Markdown",
         )
@@ -1941,26 +1957,34 @@ async def addsub_command(update, context):
             plan_type="paid",
         )
 
-        await update.message.reply_text(
+        await message.reply_text(
             f"✅ User `{target}` ko "
             f"{days} days premium de diya gaya.",
             parse_mode="Markdown",
         )
 
     except Exception as e:
-        await update.message.reply_text(
+        await message.reply_text(
             f"❌ Error: {e}"
         )
 
 
 async def delsub_command(update, context):
+    if not update.effective_user:
+        return
+
     if not is_admin(
         update.effective_user.id
     ):
         return
 
+    message = update.effective_message
+
+    if message is None:
+        return
+
     if not context.args:
-        await update.message.reply_text(
+        await message.reply_text(
             "Usage:\n`/delsub USER_ID`",
             parse_mode="Markdown",
         )
@@ -1975,14 +1999,14 @@ async def delsub_command(update, context):
             target
         )
 
-        await update.message.reply_text(
+        await message.reply_text(
             f"✅ User `{target}` ka subscription "
             "remove kar diya.",
             parse_mode="Markdown",
         )
 
     except Exception as e:
-        await update.message.reply_text(
+        await message.reply_text(
             f"❌ Error: {e}"
         )
 
