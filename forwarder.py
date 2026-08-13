@@ -229,6 +229,10 @@ async def forward_for_user(
                         from_peer=source_entity,
                     )
 
+                    # 📊 Success Count Update karein
+                    from bot import forwarded_counts
+                    forwarded_counts[user_id] = forwarded_counts.get(user_id, 0) + 1
+
                     logger.info(
                         "Forwarded message %s -> %s (user=%s slot=%s)",
                         message.id,
@@ -240,6 +244,10 @@ async def forward_for_user(
                     await asyncio.sleep(1)
 
                 except Exception as e:
+
+                    # ⚠️ Failed Count Update karein
+                    from bot import failed_counts
+                    failed_counts[user_id] = failed_counts.get(user_id, 0) + 1
 
                     logger.warning(
                         "Forward failed user=%s group=%s: %s",
