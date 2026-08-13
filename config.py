@@ -30,12 +30,12 @@ BOT_USERNAME = os.getenv(
 # ============================================================
 
 API_ID_RAW = os.getenv(
-    "API_ID",
+    "35596674",
     ""
 ).strip()
 
 API_HASH = os.getenv(
-    "API_HASH",
+    "65e7dd5ec043ae33cf2d51d3b1a37adc",
     ""
 ).strip()
 
