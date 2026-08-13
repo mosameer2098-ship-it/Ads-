@@ -107,10 +107,10 @@ async def forward_for_user(
         # DATABASE STRUCTURE
         # ----------------------------------------------------
 
-        phone = slot[1]
+        phone = slot[0]
+        session_string = slot[1]
         account_name = slot[2]
         stopped = slot[3]
-        session_string = slot[4]
 
         # ----------------------------------------------------
         # STOPPED
@@ -126,13 +126,6 @@ async def forward_for_user(
             return
 
         if not session_string:
-
-            logger.warning(
-                "No session found for user=%s slot=%s",
-                user_id,
-                slot_number,
-            )
-
             return
 
         # ----------------------------------------------------
@@ -154,23 +147,16 @@ async def forward_for_user(
 
         config = get_bot_config(user_id)
 
-        if not config:
+        if not config or not config[0]:
             return
 
-        source_channel = config[0]
+        source_channel = config[0].strip()
 
         interval = (
             config[1]
             if len(config) > 1 and config[1]
             else 30
         )
-
-        # ----------------------------------------------------
-        # SOURCE CHECK
-        # ----------------------------------------------------
-
-        if not source_channel:
-            return
 
         # ----------------------------------------------------
         # TARGET GROUPS
@@ -192,19 +178,19 @@ async def forward_for_user(
         # ----------------------------------------------------
 
         try:
-
-            source_entity = await client.get_entity(
-                source_channel
-            )
+            # Handle username or ID safely
+            if source_channel.startswith("-100") or source_channel.isdigit() or source_channel.startswith("-"):
+                source_entity = await client.get_entity(int(source_channel))
+            else:
+                source_entity = await client.get_entity(source_channel)
 
         except Exception as e:
-
             logger.error(
-                "Source channel error user=%s: %s",
+                "Source channel error user=%s channel=%s: %s",
                 user_id,
+                source_channel,
                 e,
             )
-
             return
 
         # ----------------------------------------------------
@@ -222,27 +208,16 @@ async def forward_for_user(
         message = messages[0]
 
         # ----------------------------------------------------
-        # DUPLICATE PROTECTION
+        # DUPLICATE PROTECTION (Improved)
         # ----------------------------------------------------
 
-        last_message_key = (
-            f"last_message_{user_id}_{slot_number}"
-        )
-
-        previous_id = getattr(
-            forward_for_user,
-            last_message_key,
-            None,
-        )
+        last_message_key = f"last_msg_{user_id}_{slot_number}"
+        previous_id = getattr(forward_for_user, last_message_key, None)
 
         if previous_id == message.id:
             return
 
-        setattr(
-            forward_for_user,
-            last_message_key,
-            message.id,
-        )
+        setattr(forward_for_user, last_message_key, message.id)
 
         # ----------------------------------------------------
         # FORWARD TO GROUPS
@@ -261,8 +236,7 @@ async def forward_for_user(
                 )
 
                 logger.info(
-                    "Forwarded message %s -> %s "
-                    "(user=%s slot=%s)",
+                    "Forwarded message %s -> %s (user=%s slot=%s)",
                     message.id,
                     group_id,
                     user_id,
@@ -311,33 +285,21 @@ async def background_forwarder(application):
 
         try:
 
-            # ------------------------------------------------
-            # GET ALL USERS
-            # ------------------------------------------------
-
             from database import get_all_users
 
             users = get_all_users()
 
             if not users:
-
                 await asyncio.sleep(10)
                 continue
-
-            # ------------------------------------------------
-            # PROCESS USERS
-            # ------------------------------------------------
 
             for user in users:
 
                 try:
 
                     if isinstance(user, (tuple, list)):
-
                         user_id = user[0]
-
                     else:
-
                         user_id = int(user)
 
                     await forward_for_user(
@@ -346,7 +308,6 @@ async def background_forwarder(application):
                     )
 
                 except Exception as e:
-
                     logger.warning(
                         "User forward error: %s",
                         e,
@@ -354,25 +315,17 @@ async def background_forwarder(application):
 
                 await asyncio.sleep(0.2)
 
-            # ------------------------------------------------
-            # MAIN LOOP
-            # ------------------------------------------------
-
             await asyncio.sleep(5)
 
         except asyncio.CancelledError:
-
             logger.info(
                 "Forwarder worker stopped."
             )
-
             break
 
         except Exception as e:
-
             logger.exception(
                 "Forwarder worker error: %s",
                 e,
             )
-
             await asyncio.sleep(10)
