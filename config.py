@@ -30,12 +30,12 @@ BOT_USERNAME = os.getenv(
 # ============================================================
 
 API_ID_RAW = os.getenv(
-    "TOUR_API_ID",
+    "API_ID",
     ""
 ).strip()
 
 API_HASH = os.getenv(
-    "YOUR_API_HASH",
+    "API_HASH",
     ""
 ).strip()
 
@@ -44,7 +44,6 @@ try:
     API_ID = int(API_ID_RAW)
 
 except (TypeError, ValueError):
-
     API_ID = 0
 
 
@@ -62,7 +61,6 @@ try:
     ADMIN_ID = int(ADMIN_ID_RAW)
 
 except (TypeError, ValueError):
-
     ADMIN_ID = 0
 
 
@@ -87,28 +85,24 @@ FORCE_CHANNEL_USERNAME = os.getenv(
 # ============================================================
 
 if not BOT_TOKEN:
-
     print(
         "⚠️ WARNING: BOT_TOKEN is not configured."
     )
 
 
 if not API_ID:
-
     print(
         "⚠️ WARNING: API_ID is not configured."
     )
 
 
 if not API_HASH:
-
     print(
         "⚠️ WARNING: API_HASH is not configured."
     )
 
 
 if not ADMIN_ID:
-
     print(
         "⚠️ WARNING: ADMIN_ID is not configured."
     )
