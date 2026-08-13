@@ -1220,41 +1220,127 @@ async def delsub_command(update, context):
 
 
 async def admin_stats(update, context):
+    """Live admin dashboard using current database/runtime values."""
     if not is_admin(update.effective_user.id):
         return
 
     try:
         conn = sqlite3.connect("bot_database.db")
-        users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        premium = conn.execute("""
+        conn.row_factory = sqlite3.Row
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Users who have started the bot are stored in users.
+        total_users = conn.execute(
+            "SELECT COUNT(*) FROM users"
+        ).fetchone()[0]
+
+        # Currently valid subscriptions, split by plan type.
+        paid_users = conn.execute("""
             SELECT COUNT(*) FROM subscriptions
             WHERE expiry_date > ?
-        """, (
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        )).fetchone()[0]
+              AND plan_type NOT IN ('referral', 'trial')
+        """, (now,)).fetchone()[0]
+
+        referral_users = conn.execute("""
+            SELECT COUNT(*) FROM subscriptions
+            WHERE expiry_date > ?
+              AND plan_type IN ('referral', 'trial')
+        """, (now,)).fetchone()[0]
+
+        active_premium = conn.execute("""
+            SELECT COUNT(*) FROM subscriptions
+            WHERE expiry_date > ?
+        """, (now,)).fetchone()[0]
+
+        # Every saved Telegram user account = one logged-in ID/slot.
+        logged_accounts = conn.execute("""
+            SELECT COUNT(*) FROM user_sessions
+        """).fetchone()[0]
+
+        # Number of configured target groups across users.
+        total_groups = conn.execute("""
+            SELECT COUNT(*) FROM groups
+        """).fetchone()[0]
+
+        # Number of selected target groups across users.
+        selected_groups = conn.execute("""
+            SELECT COUNT(*) FROM groups
+            WHERE selected = 1
+        """).fetchone()[0]
+
+        # Number of source channels configured.
+        source_channels = conn.execute("""
+            SELECT COUNT(*)
+            FROM bot_config
+            WHERE source_channel IS NOT NULL
+              AND TRIM(source_channel) != ''
+        """).fetchone()[0]
+
+        # Slots currently marked as running.
+        active_accounts = conn.execute("""
+            SELECT COUNT(*) FROM user_sessions
+            WHERE is_stopped = 0
+        """).fetchone()[0]
+
+        # Distinct users who currently have at least one running account.
+        active_forwarding_users = conn.execute("""
+            SELECT COUNT(DISTINCT user_id)
+            FROM user_sessions
+            WHERE is_stopped = 0
+        """).fetchone()[0]
+
         conn.close()
-    except Exception:
-        users = premium = 0
+
+    except Exception as e:
+        logger.exception("Admin live stats error: %s", e)
+        total_users = paid_users = referral_users = active_premium = 0
+        logged_accounts = total_groups = selected_groups = 0
+        source_channels = active_accounts = active_forwarding_users = 0
+
+    runtime_sent = sum(forwarded_counts.values())
+    runtime_failed = sum(failed_counts.values())
 
     text = (
-        "📊 **Admin Statistics**\n\n"
-        f"👥 Total Users: `{users}`\n"
-        f"💎 Active Premium: `{premium}`\n"
-        f"⚡ Runtime Sent: `{sum(forwarded_counts.values())}`\n"
-        f"⚠️ Runtime Failed: `{sum(failed_counts.values())}`"
+        "👑 **AdsNova Pro — Live Admin Status**\n\n"
+        "👥 **Users**\n"
+        f"🚀 Bot Started Users: `{total_users}`\n"
+        f"💎 Paid Premium Users: `{paid_users}`\n"
+        f"🎁 Referral Premium Users: `{referral_users}`\n"
+        f"⭐ Total Active Premium: `{active_premium}`\n\n"
+        "🔐 **Telegram Accounts**\n"
+        f"🆔 Logged-in Telegram IDs: `{logged_accounts}`\n"
+        f"🟢 Active Accounts: `{active_accounts}`\n\n"
+        "📢 **Forwarding**\n"
+        f"📢 Source Channels Configured: `{source_channels}`\n"
+        f"👥 Total Target Groups: `{total_groups}`\n"
+        f"📨 Selected/Receiving Groups: `{selected_groups}`\n"
+        f"🚀 Active Forwarding Users: `{active_forwarding_users}`\n\n"
+        "📈 **Live Runtime Performance**\n"
+        f"⚡ Successfully Sent: `{runtime_sent}`\n"
+        f"⚠️ Failed: `{runtime_failed}`"
     )
 
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔙 Back", callback_data="main_menu")]
+        [InlineKeyboardButton(
+            "🔄 Refresh Live Status", callback_data="admin_stats"
+        )],
+        [InlineKeyboardButton(
+            "🔙 Back", callback_data="admin_panel"
+        )],
     ])
 
     if update.callback_query:
         await update.callback_query.edit_message_text(
-            text, parse_mode="Markdown", reply_markup=keyboard
+            text,
+            parse_mode="Markdown",
+            reply_markup=keyboard,
         )
     else:
         await update.message.reply_text(
-            text, parse_mode="Markdown", reply_markup=keyboard
+            text,
+            parse_mode="Markdown",
+            reply_markup=keyboard,
         )
 
 
@@ -1511,6 +1597,12 @@ async def button_handler(update, context):
         if not is_admin(user_id):
             return
         await admin_stats(update, context)
+        return
+
+    if data == "admin_panel":
+        if not is_admin(user_id):
+            return
+        await admin_command(update, context)
         return
 
 
