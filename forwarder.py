@@ -52,6 +52,7 @@ async def get_client(user_id, slot_number, session_string):
         await client.connect()
 
         if not await client.is_user_authorized():
+
             logger.warning(
                 "Unauthorized session: user=%s slot=%s",
                 user_id,
@@ -100,6 +101,7 @@ async def close_client(user_id, slot_number):
 async def close_all_clients():
 
     for user_id, slot_number in list(active_clients.keys()):
+
         await close_client(
             user_id,
             slot_number,
@@ -139,7 +141,9 @@ async def find_source_entity(client, source_channel):
         if not username.startswith("@"):
             username = "@" + username
 
-        return await client.get_entity(username)
+        return await client.get_entity(
+            username
+        )
 
     except Exception:
         pass
@@ -194,7 +198,7 @@ def get_selected_groups(user_id):
 
 
 # ============================================================
-# SEND AS NORMAL MESSAGE
+# SEND TEXT AS NORMAL MESSAGE
 # ============================================================
 
 async def send_as_normal_message(
@@ -203,90 +207,42 @@ async def send_as_normal_message(
     message,
 ):
     """
-    IMPORTANT:
+    Sirf text message send hoga.
 
-    Do NOT use forward_messages() here.
+    Native Telegram forward use nahi hota.
+    Isliye "Forwarded from" header/logo nahi aayega.
 
-    The content is sent as a new message so Telegram
-    does not attach the original channel's Forwarded From
-    header.
+    Media completely ignore hota hai.
     """
 
-    # --------------------------------------------------------
-    # TEXT MESSAGE
-    # --------------------------------------------------------
+    if not message:
+        return False
 
-    if message.text and not message.media:
+    text = message.text
 
-        await client.send_message(
-            entity=int(group_id),
-            message=message.text,
-            link_preview=True,
-        )
+    # Sirf text allowed
+    if not text:
+        return False
 
-        return
-
-
-    # --------------------------------------------------------
-    # MEDIA MESSAGE
-    # --------------------------------------------------------
-
-    if message.media:
-
-        try:
-
-            await client.send_file(
-                entity=int(group_id),
-                file=message.media,
-                caption=message.text or None,
-            )
-
-            return
-
-        except Exception as e:
-
-            logger.warning(
-                "Direct media send failed. "
-                "Trying downloaded media. error=%s",
-                e,
-            )
-
-            # Fallback: download media first
-            try:
-
-                media_file = await client.download_media(
-                    message,
-                    file=bytes,
-                )
-
-                if media_file:
-
-                    await client.send_file(
-                        entity=int(group_id),
-                        file=media_file,
-                        caption=message.text or None,
-                    )
-
-                    return
-
-            except Exception as download_error:
-
-                logger.error(
-                    "Media download/send failed: %s",
-                    download_error,
-                )
-
-    # --------------------------------------------------------
-    # FALLBACK
-    # --------------------------------------------------------
-
-    if message.text:
+    try:
 
         await client.send_message(
             entity=int(group_id),
-            message=message.text,
+            message=text,
             link_preview=True,
         )
+
+        return True
+
+    except Exception as e:
+
+        logger.error(
+            "Text send failed: group=%s error=%s",
+            group_id,
+            e,
+        )
+
+        return False
 
 
 # ============================================================
@@ -318,6 +274,10 @@ async def forward_for_user(
             account_name,
             stopped,
         ) = slot_tuple
+
+        # ----------------------------------------------------
+        # STOPPED SLOT
+        # ----------------------------------------------------
 
         if stopped:
 
@@ -357,7 +317,7 @@ async def forward_for_user(
             return
 
         # ----------------------------------------------------
-        # GROUPS
+        # SELECTED GROUPS
         # ----------------------------------------------------
 
         selected_groups = get_selected_groups(
@@ -368,7 +328,7 @@ async def forward_for_user(
             return
 
         # ----------------------------------------------------
-        # CLIENT
+        # TELETHON CLIENT
         # ----------------------------------------------------
 
         client = await get_client(
@@ -381,7 +341,7 @@ async def forward_for_user(
             return
 
         # ----------------------------------------------------
-        # SOURCE
+        # SOURCE CHANNEL
         # ----------------------------------------------------
 
         source_entity = await find_source_entity(
@@ -400,7 +360,7 @@ async def forward_for_user(
             return
 
         # ----------------------------------------------------
-        # GET CHANNEL MESSAGES
+        # GET CHANNEL TEXT MESSAGES
         # ----------------------------------------------------
 
         messages = await client.get_messages(
@@ -417,7 +377,7 @@ async def forward_for_user(
         )
 
         # ----------------------------------------------------
-        # FIND NEXT MESSAGE
+        # FIND NEXT TEXT MESSAGE
         # ----------------------------------------------------
 
         for message in messages:
@@ -425,10 +385,16 @@ async def forward_for_user(
             if not message:
                 continue
 
-            if not message.text and not message.media:
+            # IMPORTANT:
+            # Sirf text messages.
+            # Photo/video/document/media ignore.
+            if not message.text:
                 continue
 
-            # Already processed in current cycle
+            # ------------------------------------------------
+            # CHECK CURRENT CYCLE
+            # ------------------------------------------------
+
             if was_message_forwarded(
                 user_id,
                 slot_number,
@@ -439,25 +405,28 @@ async def forward_for_user(
             successful_groups = 0
 
             # ------------------------------------------------
-            # SEND TO EVERY SELECTED GROUP
+            # SEND TO SELECTED GROUPS
             # ------------------------------------------------
 
             for group_id, group_name in selected_groups:
 
                 try:
 
-                    # IMPORTANT:
-                    # This sends a NEW message instead of
-                    # Telegram's native forward.
-                    await send_as_normal_message(
+                    sent = await send_as_normal_message(
                         client,
                         group_id,
                         message,
                     )
 
+                    if not sent:
+                        continue
+
                     successful_groups += 1
 
-                    # Forward counter
+                    # ----------------------------------------
+                    # SUCCESS COUNTER
+                    # ----------------------------------------
+
                     try:
 
                         from bot import forwarded_counts
@@ -473,7 +442,7 @@ async def forward_for_user(
                         pass
 
                     logger.info(
-                        "SEND SUCCESS: "
+                        "TEXT SEND SUCCESS: "
                         "user=%s message=%s group=%s",
                         user_id,
                         message.id,
@@ -483,6 +452,10 @@ async def forward_for_user(
                     await asyncio.sleep(1)
 
                 except Exception as e:
+
+                    # ----------------------------------------
+                    # FAILED COUNTER
+                    # ----------------------------------------
 
                     try:
 
@@ -499,7 +472,7 @@ async def forward_for_user(
                         pass
 
                     logger.error(
-                        "SEND FAILED: "
+                        "TEXT SEND FAILED: "
                         "user=%s message=%s "
                         "group=%s name=%s error=%s",
                         user_id,
@@ -510,7 +483,7 @@ async def forward_for_user(
                     )
 
             # ------------------------------------------------
-            # MARK ONLY IF AT LEAST ONE GROUP GOT IT
+            # MARK MESSAGE PROCESSED
             # ------------------------------------------------
 
             if successful_groups > 0:
@@ -521,7 +494,10 @@ async def forward_for_user(
                     message.id,
                 )
 
-            # One message per cycle
+            # ------------------------------------------------
+            # ONE MESSAGE PER INTERVAL
+            # ------------------------------------------------
+
             await asyncio.sleep(
                 interval
             )
