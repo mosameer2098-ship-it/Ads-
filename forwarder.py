@@ -95,18 +95,19 @@ async def forward_for_user(
 
         slot_number = get_active_slot(user_id)
 
-        slot = get_slot_session(
+        slot_tuple = get_slot_session(
             user_id,
             slot_number,
         )
 
-        if not slot:
+        if not slot_tuple:
             return
 
-        phone = slot[0]
-        session_string = slot[1]
-        account_name = slot[2]
-        stopped = slot[3]
+        # Database schema ke mutabiq exact mapping:
+        phone = slot_tuple[0]
+        session_string = slot_tuple[1]
+        account_name = slot_tuple[2]
+        stopped = slot_tuple[3]
 
         if stopped:
             await close_client(user_id, slot_number)
@@ -149,27 +150,24 @@ async def forward_for_user(
             return
 
         # ----------------------------------------------------
-        # ULTRA-SMART CHANNEL FINDER (Kisi bhi naam se dhund lega)
+        # ULTRA-SMART CHANNEL FINDER
         # ----------------------------------------------------
 
         source_entity = None
 
         try:
-            # 1. Pehle direct try karein (ID, Username ya Link ke sath)
             if source_channel.startswith("-100") or source_channel.isdigit() or source_channel.startswith("-"):
                 source_entity = await client.get_entity(int(source_channel))
             else:
                 try:
                     source_entity = await client.get_entity(source_channel)
                 except Exception:
-                    # Agar fail ho toh @ lagakar try karein
                     if not source_channel.startswith("@"):
                         try:
                             source_entity = await client.get_entity(f"@{source_channel}")
                         except Exception:
                             pass
 
-            # 2. Agar phir bhi na mile, toh account ke dialogs me se naam match karein
             if not source_entity:
                 dialogs = await client.get_dialogs(limit=100)
                 for d in dialogs:
