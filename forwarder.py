@@ -103,34 +103,17 @@ async def forward_for_user(
         if not slot:
             return
 
-        # ----------------------------------------------------
-        # DATABASE STRUCTURE
-        # ----------------------------------------------------
-
         phone = slot[0]
         session_string = slot[1]
         account_name = slot[2]
         stopped = slot[3]
 
-        # ----------------------------------------------------
-        # STOPPED
-        # ----------------------------------------------------
-
         if stopped:
-
-            await close_client(
-                user_id,
-                slot_number,
-            )
-
+            await close_client(user_id, slot_number)
             return
 
         if not session_string:
             return
-
-        # ----------------------------------------------------
-        # CLIENT
-        # ----------------------------------------------------
 
         client = await get_client(
             user_id,
@@ -140,10 +123,6 @@ async def forward_for_user(
 
         if not client:
             return
-
-        # ----------------------------------------------------
-        # BOT CONFIG
-        # ----------------------------------------------------
 
         config = get_bot_config(user_id)
 
@@ -158,10 +137,6 @@ async def forward_for_user(
             else 30
         )
 
-        # ----------------------------------------------------
-        # TARGET GROUPS
-        # ----------------------------------------------------
-
         groups = get_user_groups(user_id)
 
         selected_groups = [
@@ -174,14 +149,45 @@ async def forward_for_user(
             return
 
         # ----------------------------------------------------
-        # SOURCE ENTITY
+        # ADVANCED SOURCE ENTITY RESOLUTION (Public & Private)
         # ----------------------------------------------------
 
+        source_entity = None
+
         try:
-            if source_channel.startswith("-100") or source_channel.isdigit() or source_channel.startswith("-"):
-                source_entity = await client.get_entity(int(source_channel))
-            else:
-                source_entity = await client.get_entity(source_channel)
+            # 1. Agar invite link hai (t.me/joinchat/... ya t.me/+...)
+            if "t.me/" in source_channel or "joinchat" in source_channel:
+                from telethon.tl.functions.messages import ImportChatInviteRequest
+                if "+" in source_channel:
+                    hash_val = source_channel.split("+")[-1].strip()
+                elif "joinchat/" in source_channel:
+                    hash_val = source_channel.split("joinchat/")[-1].strip()
+                else:
+                    hash_val = source_channel.split("t.me/")[-1].strip()
+                
+                try:
+                    updates = await client(ImportChatInviteRequest(hash_val))
+                    for chat in updates.chats:
+                        source_entity = chat
+                        break
+                except Exception:
+                    pass
+
+            # 2. Agar Numeric ID ya -100 ID hai
+            if not source_entity:
+                clean_val = source_channel.replace("https://t.me/", "").replace("@", "").strip()
+                if clean_val.startswith("-100") or clean_val.isdigit() or clean_val.startswith("-"):
+                    source_entity = await client.get_entity(int(clean_val))
+                else:
+                    # 3. Username ya normal text ke liye
+                    try:
+                        source_entity = await client.get_entity(source_channel)
+                    except Exception:
+                        # Agar bina @ ke likha hai toh @ lagakar try karein
+                        if not source_channel.startswith("@"):
+                            source_entity = await client.get_entity(f"@{source_channel}")
+                        else:
+                            raise
 
         except Exception as e:
             logger.error(
@@ -192,8 +198,11 @@ async def forward_for_user(
             )
             return
 
+        if not source_entity:
+            return
+
         # ----------------------------------------------------
-        # FETCH MULTIPLE MESSAGES FROM HISTORY (OLD + NEW)
+        # FETCH MESSAGES (OLD + NEW)
         # ----------------------------------------------------
 
         messages = await client.get_messages(
@@ -216,7 +225,6 @@ async def forward_for_user(
 
             setattr(forward_for_user, last_message_key, True)
 
-            # Target groups me forward karein
             for group in selected_groups:
 
                 try:
@@ -229,7 +237,6 @@ async def forward_for_user(
                         from_peer=source_entity,
                     )
 
-                    # 📊 Success Count Update karein
                     from bot import forwarded_counts
                     forwarded_counts[user_id] = forwarded_counts.get(user_id, 0) + 1
 
@@ -245,7 +252,6 @@ async def forward_for_user(
 
                 except Exception as e:
 
-                    # ⚠️ Failed Count Update karein
                     from bot import failed_counts
                     failed_counts[user_id] = failed_counts.get(user_id, 0) + 1
 
@@ -256,7 +262,6 @@ async def forward_for_user(
                         e,
                     )
 
-            # Ek message bhejne ke baad interval lein
             await asyncio.sleep(
                 max(3, int(interval))
             )
