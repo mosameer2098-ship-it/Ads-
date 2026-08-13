@@ -178,7 +178,6 @@ async def forward_for_user(
         # ----------------------------------------------------
 
         try:
-            # Handle username or ID safely
             if source_channel.startswith("-100") or source_channel.isdigit() or source_channel.startswith("-"):
                 source_entity = await client.get_entity(int(source_channel))
             else:
@@ -194,73 +193,66 @@ async def forward_for_user(
             return
 
         # ----------------------------------------------------
-        # LAST MESSAGE
+        # FETCH MULTIPLE MESSAGES FROM HISTORY (OLD + NEW)
         # ----------------------------------------------------
 
         messages = await client.get_messages(
             source_entity,
-            limit=1,
+            limit=10,
         )
 
         if not messages:
             return
 
-        message = messages[0]
+        for message in reversed(messages):
+            if not message.text and not message.media:
+                continue
 
-        # ----------------------------------------------------
-        # DUPLICATE PROTECTION (Improved)
-        # ----------------------------------------------------
+            last_message_key = f"last_msg_{user_id}_{slot_number}_{message.id}"
+            is_sent = getattr(forward_for_user, last_message_key, False)
 
-        last_message_key = f"last_msg_{user_id}_{slot_number}"
-        previous_id = getattr(forward_for_user, last_message_key, None)
+            if is_sent:
+                continue
 
-        if previous_id == message.id:
-            return
+            setattr(forward_for_user, last_message_key, True)
 
-        setattr(forward_for_user, last_message_key, message.id)
+            # Target groups me forward karein
+            for group in selected_groups:
 
-        # ----------------------------------------------------
-        # FORWARD TO GROUPS
-        # ----------------------------------------------------
+                try:
 
-        for group in selected_groups:
+                    group_id = group[0]
 
-            try:
+                    await client.forward_messages(
+                        entity=group_id,
+                        messages=message,
+                        from_peer=source_entity,
+                    )
 
-                group_id = group[0]
+                    logger.info(
+                        "Forwarded message %s -> %s (user=%s slot=%s)",
+                        message.id,
+                        group_id,
+                        user_id,
+                        slot_number,
+                    )
 
-                await client.forward_messages(
-                    entity=group_id,
-                    messages=message,
-                    from_peer=source_entity,
-                )
+                    await asyncio.sleep(1)
 
-                logger.info(
-                    "Forwarded message %s -> %s (user=%s slot=%s)",
-                    message.id,
-                    group_id,
-                    user_id,
-                    slot_number,
-                )
+                except Exception as e:
 
-                await asyncio.sleep(1)
+                    logger.warning(
+                        "Forward failed user=%s group=%s: %s",
+                        user_id,
+                        group[0],
+                        e,
+                    )
 
-            except Exception as e:
-
-                logger.warning(
-                    "Forward failed user=%s group=%s: %s",
-                    user_id,
-                    group[0],
-                    e,
-                )
-
-        # ----------------------------------------------------
-        # INTERVAL
-        # ----------------------------------------------------
-
-        await asyncio.sleep(
-            max(5, int(interval))
-        )
+            # Ek message bhejne ke baad interval lein
+            await asyncio.sleep(
+                max(3, int(interval))
+            )
+            break
 
     except Exception as e:
 
