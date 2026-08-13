@@ -12,8 +12,8 @@ from database import (
     get_bot_config,
     get_user_groups,
     get_all_users,
-    was_message_forwarded,
-    mark_message_forwarded,
+    get_forward_position,
+    set_forward_position,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,7 @@ async def get_client(user_id, slot_number, session_string):
             logger.warning(
                 "Unauthorized session: user=%s slot=%s",
                 user_id,
-                slot_number,
+                slot_number
             )
             await client.disconnect()
             return None
@@ -64,7 +64,7 @@ async def get_client(user_id, slot_number, session_string):
         logger.info(
             "Telethon client connected: user=%s slot=%s",
             user_id,
-            slot_number,
+            slot_number
         )
 
         return client
@@ -74,7 +74,7 @@ async def get_client(user_id, slot_number, session_string):
             "Client connection error: user=%s slot=%s: %s",
             user_id,
             slot_number,
-            e,
+            e
         )
         return None
 
@@ -101,7 +101,6 @@ async def close_all_clients():
 # ============================================================
 
 async def find_source_entity(client, source_channel):
-
     if not source_channel:
         return None
 
@@ -110,7 +109,9 @@ async def find_source_entity(client, source_channel):
     # Numeric Telegram ID
     try:
         if source_channel.lstrip("-").isdigit():
-            return await client.get_entity(int(source_channel))
+            return await client.get_entity(
+                int(source_channel)
+            )
     except Exception:
         pass
 
@@ -126,15 +127,21 @@ async def find_source_entity(client, source_channel):
     except Exception:
         pass
 
-    # Search dialogs by title
+    # Dialog title search
     try:
         dialogs = await client.get_dialogs(limit=None)
 
-        needle = source_channel.replace("@", "").lower()
+        needle = source_channel.replace(
+            "@",
+            ""
+        ).lower()
 
         for dialog in dialogs:
-
-            title = getattr(dialog, "title", None)
+            title = getattr(
+                dialog,
+                "title",
+                None
+            )
 
             if title and needle in title.lower():
                 return dialog.entity
@@ -142,7 +149,7 @@ async def find_source_entity(client, source_channel):
     except Exception as e:
         logger.warning(
             "Dialog source search failed: %s",
-            e,
+            e
         )
 
     return None
@@ -153,7 +160,6 @@ async def find_source_entity(client, source_channel):
 # ============================================================
 
 def get_selected_groups(user_id):
-
     return [
         (group[0], group[1])
         for group in get_user_groups(user_id)
@@ -162,94 +168,71 @@ def get_selected_groups(user_id):
 
 
 # ============================================================
-# COPY MESSAGE WITHOUT FORWARD HEADER
+# GET SOURCE MESSAGES
 # ============================================================
 
-async def copy_message_to_group(
+async def get_cycle_messages(
     client,
-    message,
-    group_id,
+    source_entity
 ):
     """
-    Copy the source message as a NEW message.
+    Gets the available channel messages in
+    oldest -> newest order.
 
-    This does NOT use forward_messages().
-    Therefore Telegram will not add:
-    "Forwarded from ..."
-
-    Supports:
-    - Text
-    - Photos
-    - Videos
-    - Documents
-    - Audio
-    - Voice
-    - GIF / other Telegram media
+    limit=None allows the client to retrieve
+    the available message history instead of
+    only checking the latest 20 messages.
     """
 
     try:
-
-        # ----------------------------------------------------
-        # TEXT MESSAGE
-        # ----------------------------------------------------
-
-        if message.text and not message.media:
-
-            await client.send_message(
-                entity=int(group_id),
-                message=message.text,
-                formatting_entities=message.entities,
-                link_preview=False,
-            )
-
-            return True
-
-        # ----------------------------------------------------
-        # MEDIA MESSAGE
-        # ----------------------------------------------------
-
-        if message.media:
-
-            await client.send_file(
-                entity=int(group_id),
-                file=message.media,
-                caption=message.text or None,
-                formatting_entities=message.entities,
-            )
-
-            return True
-
-        return False
-
-    except Exception as e:
-
-        logger.error(
-            "Copy message failed: message=%s group=%s error=%s",
-            getattr(message, "id", None),
-            group_id,
-            e,
+        messages = await client.get_messages(
+            source_entity,
+            limit=None,
         )
 
-        return False
+        if not messages:
+            return []
+
+        valid_messages = []
+
+        for message in messages:
+            if not message:
+                continue
+
+            # Skip service/empty messages
+            if not message.text and not message.media:
+                continue
+
+            valid_messages.append(message)
+
+        # Telethon normally returns newest -> oldest.
+        # Reverse to get oldest -> newest.
+        valid_messages.reverse()
+
+        return valid_messages
+
+    except Exception as e:
+        logger.exception(
+            "Could not get source messages: %s",
+            e
+        )
+        return []
 
 
 # ============================================================
-# FORWARD FOR ONE USER
+# FORWARD ONE USER
 # ============================================================
 
-async def forward_for_user(user_id, application=None):
-
+async def forward_for_user(
+    user_id,
+    application=None
+):
     try:
-
-        # ----------------------------------------------------
-        # ACTIVE SLOT
-        # ----------------------------------------------------
-
         slot_number = get_active_slot(user_id)
 
         slot_tuple = get_slot_session(
             user_id,
-            slot_number,
+            slot_number
         )
 
         if not slot_tuple:
@@ -257,22 +240,12 @@ async def forward_for_user(user_id, application=None):
 
         phone, session_string, account_name, stopped = slot_tuple
 
-        # ----------------------------------------------------
-        # STOPPED SLOT
-        # ----------------------------------------------------
-
         if stopped:
-
             await close_client(
                 user_id,
-                slot_number,
+                slot_number
             )
-
             return
-
-        # ----------------------------------------------------
-        # BOT CONFIG
-        # ----------------------------------------------------
 
         config = get_bot_config(user_id)
 
@@ -290,197 +263,181 @@ async def forward_for_user(user_id, application=None):
 
         interval = max(
             3,
-            int(interval or 30),
+            int(interval or 30)
         )
 
         if not source_channel:
             return
 
-        # ----------------------------------------------------
-        # SELECTED GROUPS
-        # ----------------------------------------------------
-
-        selected_groups = get_selected_groups(user_id)
+        selected_groups = get_selected_groups(
+            user_id
+        )
 
         if not selected_groups:
             return
 
-        # ----------------------------------------------------
-        # CONNECT USER SESSION
-        # ----------------------------------------------------
-
         client = await get_client(
             user_id,
             slot_number,
-            session_string,
+            session_string
         )
 
         if not client:
             return
 
-        # ----------------------------------------------------
-        # FIND SOURCE
-        # ----------------------------------------------------
-
         source_entity = await find_source_entity(
             client,
-            source_channel,
+            source_channel
         )
 
         if not source_entity:
-
             logger.error(
                 "Source not found: user=%s source=%s",
                 user_id,
-                source_channel,
+                source_channel
             )
-
             return
 
-        # ----------------------------------------------------
-        # GET RECENT MESSAGES
-        # ----------------------------------------------------
-
-        messages = await client.get_messages(
-            source_entity,
-            limit=20,
+        messages = await get_cycle_messages(
+            client,
+            source_entity
         )
 
         if not messages:
+            logger.info(
+                "No messages found: user=%s",
+                user_id
+            )
             return
 
-        # ----------------------------------------------------
-        # OLD → NEW
-        # ----------------------------------------------------
+        # A stable source key keeps the position
+        # separate for different source channels.
+        try:
+            source_key = str(
+                getattr(
+                    source_entity,
+                    "id",
+                    source_channel
+                )
+            )
+        except Exception:
+            source_key = str(source_channel)
 
-        for message in reversed(messages):
+        current_index = get_forward_position(
+            user_id,
+            slot_number,
+            source_key
+        )
 
-            if not message:
-                continue
+        # If the saved index is beyond the current
+        # number of messages, start a new cycle.
+        if current_index >= len(messages):
+            current_index = 0
 
-            if not message.text and not message.media:
-                continue
+        message = messages[current_index]
 
-            # ------------------------------------------------
-            # DUPLICATE CHECK
-            # ------------------------------------------------
+        successful_groups = 0
 
-            if was_message_forwarded(
-                user_id,
-                slot_number,
-                message.id,
-            ):
-                continue
+        # ====================================================
+        # SEND CURRENT MESSAGE TO SELECTED GROUPS
+        # ====================================================
 
-            successful_groups = 0
+        for group_id, group_name in selected_groups:
 
-            # ------------------------------------------------
-            # SEND TO EVERY SELECTED GROUP
-            # ------------------------------------------------
-
-            for group_id, group_name in selected_groups:
-
-                try:
-
-                    success = await copy_message_to_group(
-                        client=client,
-                        message=message,
-                        group_id=group_id,
-                    )
-
-                    if success:
-
-                        successful_groups += 1
-
-                        # ------------------------------------
-                        # FORWARDED COUNT
-                        # ------------------------------------
-
-                        try:
-
-                            from bot import forwarded_counts
-
-                            forwarded_counts[user_id] = (
-                                forwarded_counts.get(user_id, 0) + 1
-                            )
-
-                        except Exception:
-                            pass
-
-                        logger.info(
-                            "COPY SUCCESS: user=%s "
-                            "message=%s group=%s",
-                            user_id,
-                            message.id,
-                            group_id,
-                        )
-
-                    else:
-
-                        try:
-
-                            from bot import failed_counts
-
-                            failed_counts[user_id] = (
-                                failed_counts.get(user_id, 0) + 1
-                            )
-
-                        except Exception:
-                            pass
-
-                    await asyncio.sleep(1)
-
-                except Exception as e:
-
-                    try:
-
-                        from bot import failed_counts
-
-                        failed_counts[user_id] = (
-                            failed_counts.get(user_id, 0) + 1
-                        )
-
-                    except Exception:
-                        pass
-
-                    logger.error(
-                        "COPY FAILED: user=%s "
-                        "message=%s group=%s "
-                        "name=%s error=%s",
-                        user_id,
-                        message.id,
-                        group_id,
-                        group_name,
-                        e,
-                    )
-
-            # ------------------------------------------------
-            # MARK AS PROCESSED
-            # ------------------------------------------------
-
-            if successful_groups > 0:
-
-                mark_message_forwarded(
-                    user_id,
-                    slot_number,
-                    message.id,
+            try:
+                await client.forward_messages(
+                    entity=int(group_id),
+                    messages=message,
+                    from_peer=source_entity,
                 )
 
-            # ------------------------------------------------
-            # WAIT BEFORE NEXT MESSAGE
-            # ------------------------------------------------
+                successful_groups += 1
 
-            await asyncio.sleep(interval)
+                try:
+                    from bot import forwarded_counts
 
-            # Only one new message per cycle
-            break
+                    forwarded_counts[user_id] = (
+                        forwarded_counts.get(
+                            user_id,
+                            0
+                        ) + 1
+                    )
+
+                except Exception:
+                    pass
+
+                logger.info(
+                    "Forward SUCCESS: user=%s "
+                    "message=%s index=%s group=%s",
+                    user_id,
+                    message.id,
+                    current_index,
+                    group_id
+                )
+
+                await asyncio.sleep(1)
+
+            except Exception as e:
+
+                try:
+                    from bot import failed_counts
+
+                    failed_counts[user_id] = (
+                        failed_counts.get(
+                            user_id,
+                            0
+                        ) + 1
+                    )
+
+                except Exception:
+                    pass
+
+                logger.error(
+                    "Forward FAILED: user=%s "
+                    "message=%s group=%s "
+                    "name=%s error=%s",
+                    user_id,
+                    message.id,
+                    group_id,
+                    group_name,
+                    e
+                )
+
+        # ====================================================
+        # MOVE TO NEXT MESSAGE
+        # ====================================================
+
+        if successful_groups > 0:
+
+            next_index = current_index + 1
+
+            # IMPORTANT:
+            # After the last message, go back to 0.
+            if next_index >= len(messages):
+                next_index = 0
+
+                logger.info(
+                    "Cycle completed: user=%s "
+                    "source=%s. Restarting from message 1.",
+                    user_id,
+                    source_channel
+                )
+
+            set_forward_position(
+                user_id,
+                slot_number,
+                source_key,
+                next_index
+            )
+
+        # Wait before sending the next message.
+        await asyncio.sleep(interval)
 
     except Exception as e:
-
         logger.exception(
             "Forwarder error for user=%s: %s",
             user_id,
-            e,
+            e
         )
 
 
@@ -489,7 +446,6 @@ async def forward_for_user(user_id, application=None):
 # ============================================================
 
 async def background_forwarder(application):
-
     logger.info(
         "AdsNova Pro Forwarder started."
     )
@@ -503,17 +459,15 @@ async def background_forwarder(application):
             for user_id in users:
 
                 try:
-
                     await forward_for_user(
                         user_id,
-                        application,
+                        application
                     )
 
                 except Exception as e:
-
                     logger.exception(
                         "User forward error: %s",
-                        e,
+                        e
                     )
 
                 await asyncio.sleep(0.2)
