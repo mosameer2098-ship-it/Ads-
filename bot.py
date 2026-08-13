@@ -52,6 +52,7 @@ from database import (
     get_custom_share_message,
     check_referral_eligibility,
     claim_referral_reward,
+    save_real_groups_and_channels,
 )
 
 # ============================================================
@@ -765,7 +766,7 @@ async def handle_login_message(update, context):
 
 
 # ============================================================
-# FINISH LOGIN
+# FINISH LOGIN (WITH REAL-TIME DIALOG FETCHING)
 # ============================================================
 
 async def finish_login(update, user_id):
@@ -799,12 +800,33 @@ async def finish_login(update, user_id):
             or str(me.id)
         )
 
+        # 🚀 LOGIN HOTE HI CHANNELS AUR GROUPS FETCH KAREIN
+        dialogs = await client.get_dialogs(limit=None)
+        groups = []
+        channels = []
+        for d in dialogs:
+            if d.is_channel or d.is_group:
+                entity = d.entity
+                if getattr(entity, 'broadcast', False):
+                    channels.append((d.id, d.title))
+                elif getattr(entity, 'megagroup', False) or d.is_group:
+                    groups.append((d.id, d.title))
+                else:
+                    channels.append((d.id, d.title))
+
+        # DATABASE ME SAVE KAREIN
         save_user_session(
             user_id=user_id,
             slot_number=slot,
             phone=phone,
             session_string=session_string,
             account_name=account_name,
+        )
+
+        save_real_groups_and_channels(
+            user_id=user_id,
+            groups_list=groups,
+            channels_list=channels,
         )
 
         set_active_slot(
@@ -831,8 +853,10 @@ async def finish_login(update, user_id):
             f"👤 Account: **{account_name}**\n"
             f"🆔 Telegram ID: `{me.id}`\n"
             f"📱 Phone: `{phone}`\n\n"
-            "⭐ Ye account ab active account hai.\n\n"
-            "🔄 Aap maximum **20 accounts** login rakh sakte ho.",
+            f"📢 Channels Found: `{len(channels)}`\n"
+            f"👥 Groups Found: `{len(groups)}`\n\n"
+            "⭐ Saare channels aur groups successfully fetch ho gaye hain!\n"
+            "Ab aap Settings me jaakar Source Channel aur Target Groups select kar sakte hain.",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
                 [
@@ -940,8 +964,6 @@ async def switch_account(update, context, slot):
         slot,
         0,
     )
-
-    account_name = found[3] or "Unknown"
 
     await update.callback_query.answer(
         f"✅ Slot {slot} active ho gaya.",
@@ -1142,7 +1164,6 @@ async def start(update, context):
 
     save_user(user)
 
-    # Referral
     if context.args:
 
         arg = context.args[0]
@@ -1179,7 +1200,6 @@ async def start(update, context):
                     e,
                 )
 
-    # Force Join
     if not await check_membership(
         user.id,
         context,
