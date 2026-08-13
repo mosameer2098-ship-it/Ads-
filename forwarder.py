@@ -149,45 +149,33 @@ async def forward_for_user(
             return
 
         # ----------------------------------------------------
-        # ADVANCED SOURCE ENTITY RESOLUTION (Public & Private)
+        # ULTRA-SMART CHANNEL FINDER (Kisi bhi naam se dhund lega)
         # ----------------------------------------------------
 
         source_entity = None
 
         try:
-            # 1. Agar invite link hai (t.me/joinchat/... ya t.me/+...)
-            if "t.me/" in source_channel or "joinchat" in source_channel:
-                from telethon.tl.functions.messages import ImportChatInviteRequest
-                if "+" in source_channel:
-                    hash_val = source_channel.split("+")[-1].strip()
-                elif "joinchat/" in source_channel:
-                    hash_val = source_channel.split("joinchat/")[-1].strip()
-                else:
-                    hash_val = source_channel.split("t.me/")[-1].strip()
-                
+            # 1. Pehle direct try karein (ID, Username ya Link ke sath)
+            if source_channel.startswith("-100") or source_channel.isdigit() or source_channel.startswith("-"):
+                source_entity = await client.get_entity(int(source_channel))
+            else:
                 try:
-                    updates = await client(ImportChatInviteRequest(hash_val))
-                    for chat in updates.chats:
-                        source_entity = chat
-                        break
+                    source_entity = await client.get_entity(source_channel)
                 except Exception:
-                    pass
-
-            # 2. Agar Numeric ID ya -100 ID hai
-            if not source_entity:
-                clean_val = source_channel.replace("https://t.me/", "").replace("@", "").strip()
-                if clean_val.startswith("-100") or clean_val.isdigit() or clean_val.startswith("-"):
-                    source_entity = await client.get_entity(int(clean_val))
-                else:
-                    # 3. Username ya normal text ke liye
-                    try:
-                        source_entity = await client.get_entity(source_channel)
-                    except Exception:
-                        # Agar bina @ ke likha hai toh @ lagakar try karein
-                        if not source_channel.startswith("@"):
+                    # Agar fail ho toh @ lagakar try karein
+                    if not source_channel.startswith("@"):
+                        try:
                             source_entity = await client.get_entity(f"@{source_channel}")
-                        else:
-                            raise
+                        except Exception:
+                            pass
+
+            # 2. Agar phir bhi na mile, toh account ke dialogs me se naam match karein
+            if not source_entity:
+                dialogs = await client.get_dialogs(limit=100)
+                for d in dialogs:
+                    if d.title and source_channel.lower() in d.title.lower():
+                        source_entity = d.entity
+                        break
 
         except Exception as e:
             logger.error(
