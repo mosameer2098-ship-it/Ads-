@@ -12,8 +12,9 @@ from database import (
     get_bot_config,
     get_user_groups,
     get_all_users,
-    was_message_forwarded,
-    mark_message_forwarded,
+    get_forward_position,
+    set_forward_position,
+    reset_forward_position,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ async def get_client(user_id, slot_number, session_string):
         return None
 
     try:
+
         client = TelegramClient(
             StringSession(session_string),
             int(API_ID),
@@ -75,7 +77,7 @@ async def get_client(user_id, slot_number, session_string):
     except Exception as e:
 
         logger.exception(
-            "Client connection error: user=%s slot=%s: %s",
+            "Client connection error: user=%s slot=%s error=%s",
             user_id,
             slot_number,
             e,
@@ -121,7 +123,10 @@ async def find_source_entity(client, source_channel):
         source_channel
     ).strip()
 
-    # Numeric Telegram ID
+    # --------------------------------------------------------
+    # NUMERIC TELEGRAM ID
+    # --------------------------------------------------------
+
     try:
 
         if source_channel.lstrip("-").isdigit():
@@ -133,7 +138,10 @@ async def find_source_entity(client, source_channel):
     except Exception:
         pass
 
-    # Username
+    # --------------------------------------------------------
+    # USERNAME
+    # --------------------------------------------------------
+
     try:
 
         username = source_channel
@@ -148,7 +156,10 @@ async def find_source_entity(client, source_channel):
     except Exception:
         pass
 
-    # Search dialogs by title
+    # --------------------------------------------------------
+    # SEARCH DIALOGS BY TITLE
+    # --------------------------------------------------------
+
     try:
 
         dialogs = await client.get_dialogs(
@@ -198,33 +209,37 @@ def get_selected_groups(user_id):
 
 
 # ============================================================
-# SEND TEXT AS NORMAL MESSAGE
+# SEND ONLY TEXT AS NEW MESSAGE
 # ============================================================
 
-async def send_as_normal_message(
+async def send_text_message(
     client,
     group_id,
     message,
 ):
-    """
-    Sirf text message send hoga.
 
-    Native Telegram forward use nahi hota.
-    Isliye "Forwarded from" header/logo nahi aayega.
-
-    Media completely ignore hota hai.
-    """
+    # --------------------------------------------------------
+    # MEDIA / NON-TEXT COMPLETELY IGNORE
+    # --------------------------------------------------------
 
     if not message:
         return False
 
-    text = message.text
+    if not message.text:
+        return False
 
-    # Sirf text allowed
+    text = str(
+        message.text
+    ).strip()
+
     if not text:
         return False
 
     try:
+
+        # IMPORTANT:
+        # send_message() creates a NEW message.
+        # Native forward_messages() is NOT used.
 
         await client.send_message(
             entity=int(group_id),
@@ -246,7 +261,65 @@ async def send_as_normal_message(
 
 
 # ============================================================
-# FORWARD FOR USER
+# GET TEXT MESSAGES
+# ============================================================
+
+async def get_text_messages(
+    client,
+    source_entity,
+):
+
+    try:
+
+        messages = await client.get_messages(
+            source_entity,
+            limit=100,
+        )
+
+        if not messages:
+            return []
+
+        # Oldest -> newest
+        messages = list(
+            reversed(messages)
+        )
+
+        # ONLY TEXT
+        text_messages = []
+
+        for message in messages:
+
+            if not message:
+                continue
+
+            if not message.text:
+                continue
+
+            text = str(
+                message.text
+            ).strip()
+
+            if not text:
+                continue
+
+            text_messages.append(
+                message
+            )
+
+        return text_messages
+
+    except Exception as e:
+
+        logger.exception(
+            "Unable to get source messages: %s",
+            e,
+        )
+
+        return []
+
+
+# ============================================================
+# FORWARD FOR ONE USER
 # ============================================================
 
 async def forward_for_user(
@@ -256,9 +329,17 @@ async def forward_for_user(
 
     try:
 
+        # ----------------------------------------------------
+        # ACTIVE SLOT
+        # ----------------------------------------------------
+
         slot_number = get_active_slot(
             user_id
         )
+
+        # ----------------------------------------------------
+        # SESSION
+        # ----------------------------------------------------
 
         slot_tuple = get_slot_session(
             user_id,
@@ -276,7 +357,7 @@ async def forward_for_user(
         ) = slot_tuple
 
         # ----------------------------------------------------
-        # STOPPED SLOT
+        # STOPPED
         # ----------------------------------------------------
 
         if stopped:
@@ -289,7 +370,7 @@ async def forward_for_user(
             return
 
         # ----------------------------------------------------
-        # BOT CONFIG
+        # CONFIG
         # ----------------------------------------------------
 
         config = get_bot_config(
@@ -317,7 +398,7 @@ async def forward_for_user(
             return
 
         # ----------------------------------------------------
-        # SELECTED GROUPS
+        # GROUPS
         # ----------------------------------------------------
 
         selected_groups = get_selected_groups(
@@ -328,7 +409,7 @@ async def forward_for_user(
             return
 
         # ----------------------------------------------------
-        # TELETHON CLIENT
+        # CLIENT
         # ----------------------------------------------------
 
         client = await get_client(
@@ -341,7 +422,7 @@ async def forward_for_user(
             return
 
         # ----------------------------------------------------
-        # SOURCE CHANNEL
+        # SOURCE
         # ----------------------------------------------------
 
         source_entity = await find_source_entity(
@@ -360,149 +441,205 @@ async def forward_for_user(
             return
 
         # ----------------------------------------------------
-        # GET CHANNEL TEXT MESSAGES
+        # SOURCE KEY
         # ----------------------------------------------------
 
-        messages = await client.get_messages(
+        try:
+
+            source_key = str(
+                getattr(
+                    source_entity,
+                    "id",
+                    source_channel,
+                )
+            )
+
+        except Exception:
+
+            source_key = str(
+                source_channel
+            )
+
+        # ----------------------------------------------------
+        # GET ONLY TEXT MESSAGES
+        # ----------------------------------------------------
+
+        messages = await get_text_messages(
+            client,
             source_entity,
-            limit=100,
         )
 
         if not messages:
+
+            logger.info(
+                "No text messages found: user=%s source=%s",
+                user_id,
+                source_channel,
+            )
+
             return
 
-        # Oldest -> newest
-        messages = list(
-            reversed(messages)
+        # ----------------------------------------------------
+        # CURRENT POSITION
+        # ----------------------------------------------------
+
+        position = get_forward_position(
+            user_id,
+            slot_number,
+            source_key,
         )
 
+        # Safety
+        if position < 0:
+            position = 0
+
         # ----------------------------------------------------
-        # FIND NEXT TEXT MESSAGE
+        # CYCLE COMPLETE
         # ----------------------------------------------------
 
-        for message in messages:
+        if position >= len(messages):
 
-            if not message:
-                continue
+            logger.info(
+                "Text cycle completed. Restarting from 1. "
+                "user=%s source=%s",
+                user_id,
+                source_channel,
+            )
 
-            # IMPORTANT:
-            # Sirf text messages.
-            # Photo/video/document/media ignore.
-            if not message.text:
-                continue
+            position = 0
 
-            # ------------------------------------------------
-            # CHECK CURRENT CYCLE
-            # ------------------------------------------------
-
-            if was_message_forwarded(
+            reset_forward_position(
                 user_id,
                 slot_number,
-                message.id,
-            ):
-                continue
+                source_key,
+            )
 
-            successful_groups = 0
+        # ----------------------------------------------------
+        # MESSAGE TO SEND
+        # ----------------------------------------------------
 
-            # ------------------------------------------------
-            # SEND TO SELECTED GROUPS
-            # ------------------------------------------------
+        message = messages[position]
 
-            for group_id, group_name in selected_groups:
+        successful_groups = 0
+
+        # ----------------------------------------------------
+        # SEND TO ALL SELECTED GROUPS
+        # ----------------------------------------------------
+
+        for group_id, group_name in selected_groups:
+
+            try:
+
+                sent = await send_text_message(
+                    client,
+                    group_id,
+                    message,
+                )
+
+                if not sent:
+                    continue
+
+                successful_groups += 1
+
+                # ------------------------------------------------
+                # SUCCESS COUNTER
+                # ------------------------------------------------
 
                 try:
 
-                    sent = await send_as_normal_message(
-                        client,
-                        group_id,
-                        message,
+                    from bot import forwarded_counts
+
+                    forwarded_counts[user_id] = (
+                        forwarded_counts.get(
+                            user_id,
+                            0,
+                        ) + 1
                     )
 
-                    if not sent:
-                        continue
+                except Exception:
+                    pass
 
-                    successful_groups += 1
-
-                    # ----------------------------------------
-                    # SUCCESS COUNTER
-                    # ----------------------------------------
-
-                    try:
-
-                        from bot import forwarded_counts
-
-                        forwarded_counts[user_id] = (
-                            forwarded_counts.get(
-                                user_id,
-                                0,
-                            ) + 1
-                        )
-
-                    except Exception:
-                        pass
-
-                    logger.info(
-                        "TEXT SEND SUCCESS: "
-                        "user=%s message=%s group=%s",
-                        user_id,
-                        message.id,
-                        group_id,
-                    )
-
-                    await asyncio.sleep(1)
-
-                except Exception as e:
-
-                    # ----------------------------------------
-                    # FAILED COUNTER
-                    # ----------------------------------------
-
-                    try:
-
-                        from bot import failed_counts
-
-                        failed_counts[user_id] = (
-                            failed_counts.get(
-                                user_id,
-                                0,
-                            ) + 1
-                        )
-
-                    except Exception:
-                        pass
-
-                    logger.error(
-                        "TEXT SEND FAILED: "
-                        "user=%s message=%s "
-                        "group=%s name=%s error=%s",
-                        user_id,
-                        message.id,
-                        group_id,
-                        group_name,
-                        e,
-                    )
-
-            # ------------------------------------------------
-            # MARK MESSAGE PROCESSED
-            # ------------------------------------------------
-
-            if successful_groups > 0:
-
-                mark_message_forwarded(
+                logger.info(
+                    "TEXT SEND SUCCESS: "
+                    "user=%s position=%s message=%s group=%s",
                     user_id,
-                    slot_number,
+                    position + 1,
                     message.id,
+                    group_id,
                 )
 
+                await asyncio.sleep(1)
+
+            except Exception as e:
+
+                # ------------------------------------------------
+                # FAILED COUNTER
+                # ------------------------------------------------
+
+                try:
+
+                    from bot import failed_counts
+
+                    failed_counts[user_id] = (
+                        failed_counts.get(
+                            user_id,
+                            0,
+                        ) + 1
+                    )
+
+                except Exception:
+                    pass
+
+                logger.error(
+                    "TEXT SEND FAILED: "
+                    "user=%s position=%s message=%s "
+                    "group=%s name=%s error=%s",
+                    user_id,
+                    position + 1,
+                    message.id,
+                    group_id,
+                    group_name,
+                    e,
+                )
+
+        # ----------------------------------------------------
+        # MOVE TO NEXT MESSAGE ONLY AFTER SUCCESS
+        # ----------------------------------------------------
+
+        if successful_groups > 0:
+
+            next_position = position + 1
+
             # ------------------------------------------------
-            # ONE MESSAGE PER INTERVAL
+            # IF LAST MESSAGE -> NEXT CYCLE STARTS FROM 1
             # ------------------------------------------------
 
-            await asyncio.sleep(
-                interval
+            if next_position >= len(messages):
+
+                logger.info(
+                    "Last text message sent. "
+                    "Next cycle will start from first message. "
+                    "user=%s source=%s",
+                    user_id,
+                    source_channel,
+                )
+
+                next_position = 0
+
+            set_forward_position(
+                user_id,
+                slot_number,
+                source_key,
+                next_position,
             )
 
-            break
+        # ----------------------------------------------------
+        # WAIT BEFORE NEXT MESSAGE
+        # ----------------------------------------------------
+
+        await asyncio.sleep(
+            interval
+        )
 
     except Exception as e:
 
@@ -522,7 +659,7 @@ async def background_forwarder(
 ):
 
     logger.info(
-        "AdsNova Pro Forwarder started."
+        "AdsNova Pro Text Forwarder started."
     )
 
     try:
