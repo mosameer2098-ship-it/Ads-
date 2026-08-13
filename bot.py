@@ -41,7 +41,11 @@ from database import (
     get_user_channels,
     get_remaining_days,
     get_active_slot,
+    set_active_slot,
     get_slot_session,
+    get_user_sessions,
+    save_user_session,
+    remove_user_session,
     set_slot_stopped,
     add_premium_subscription,
     remove_premium_subscription,
@@ -49,6 +53,39 @@ from database import (
     check_referral_eligibility,
     claim_referral_reward,
 )
+
+# ============================================================
+# TELETHON
+# ============================================================
+
+try:
+    from telethon import TelegramClient
+    from telethon.sessions import StringSession
+    from telethon.errors import (
+        SessionPasswordNeededError,
+        PhoneCodeInvalidError,
+        PhoneCodeExpiredError,
+        PasswordHashInvalidError,
+    )
+
+    TELETHON_AVAILABLE = True
+
+except ImportError:
+    TELETHON_AVAILABLE = False
+
+
+# ============================================================
+# CONFIG
+# ============================================================
+
+try:
+    from config import API_ID, API_HASH
+except ImportError:
+    API_ID = 0
+    API_HASH = ""
+
+
+MAX_SLOTS = 20
 
 
 # ============================================================
@@ -72,6 +109,9 @@ admin_sub_target = {}
 
 forwarded_counts = {}
 failed_counts = {}
+
+# Login temporary states
+login_states = {}
 
 
 # ============================================================
@@ -102,7 +142,6 @@ def subscription_label(user_id):
         return "Lifetime (Admin) ♾️"
 
     try:
-
         conn = sqlite3.connect("bot_database.db")
         cursor = conn.cursor()
 
@@ -266,6 +305,762 @@ async def show_subscription_required(update, context):
 
 
 # ============================================================
+# ACCOUNT STATUS
+# ============================================================
+
+def account_keyboard(user_id):
+
+    sessions = get_user_sessions(user_id)
+
+    rows = []
+
+    for slot, phone, session_string, account_name, stopped in sessions:
+
+        status = "🛑" if stopped else "🟢"
+
+        name = account_name or phone or f"Slot {slot}"
+
+        rows.append([
+            InlineKeyboardButton(
+                f"{status} Slot {slot} • {name}",
+                callback_data=f"switch_{slot}",
+            )
+        ])
+
+    rows.append([
+        InlineKeyboardButton(
+            "➕ Login New Account",
+            callback_data="login_account",
+        )
+    ])
+
+    rows.append([
+        InlineKeyboardButton(
+            "🗑️ Remove Account",
+            callback_data="remove_account",
+        )
+    ])
+
+    rows.append([
+        InlineKeyboardButton(
+            "🔙 Back",
+            callback_data="settings",
+        )
+    ])
+
+    return InlineKeyboardMarkup(rows)
+
+
+# ============================================================
+# ACCOUNT PAGE
+# ============================================================
+
+async def accounts_page(update, context):
+
+    user_id = update.effective_user.id
+
+    sessions = get_user_sessions(user_id)
+
+    active_slot = get_active_slot(user_id)
+
+    lines = [
+        "👤 **Telegram Accounts**",
+        "",
+        f"🔄 Active Slot: **{active_slot}**",
+        "",
+    ]
+
+    if not sessions:
+
+        lines.append(
+            "❌ Koi account login nahi hai."
+        )
+
+    else:
+
+        for slot, phone, session_string, account_name, stopped in sessions:
+
+            status = "🛑 Stopped" if stopped else "🟢 Active"
+
+            name = account_name or "Unknown"
+
+            if slot == active_slot:
+                mark = " ⭐"
+            else:
+                mark = ""
+
+            lines.append(
+                f"**Slot {slot}**{mark}\n"
+                f"👤 {name}\n"
+                f"📱 {phone or 'N/A'}\n"
+                f"📊 {status}\n"
+            )
+
+    await update.callback_query.edit_message_text(
+        "\n".join(lines),
+        parse_mode="Markdown",
+        reply_markup=account_keyboard(user_id),
+    )
+
+
+# ============================================================
+# LOGIN PAGE
+# ============================================================
+
+async def login_page(update, context):
+
+    user_id = update.effective_user.id
+
+    if not TELETHON_AVAILABLE:
+
+        await update.callback_query.edit_message_text(
+            "❌ Telethon installed nahi hai.\n\n"
+            "Requirements me `telethon` add karo.",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "🔙 Back",
+                        callback_data="accounts",
+                    )
+                ]
+            ]),
+        )
+
+        return
+
+    if not API_ID or not API_HASH:
+
+        await update.callback_query.edit_message_text(
+            "❌ API_ID / API_HASH configured nahi hai.\n\n"
+            "Config.py me Telegram API credentials add karo.",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "🔙 Back",
+                        callback_data="accounts",
+                    )
+                ]
+            ]),
+        )
+
+        return
+
+    sessions = get_user_sessions(user_id)
+
+    used_slots = {
+        row[0]
+        for row in sessions
+    }
+
+    free_slot = None
+
+    for slot in range(1, MAX_SLOTS + 1):
+
+        if slot not in used_slots:
+            free_slot = slot
+            break
+
+    if free_slot is None:
+
+        await update.callback_query.edit_message_text(
+            "⚠️ **20/20 Account Slots Full**\n\n"
+            "Aap maximum 20 Telegram accounts login rakh sakte ho.\n\n"
+            "Pehle kisi purane account ko remove karo.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "👤 Switch Account",
+                        callback_data="accounts",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🔙 Back",
+                        callback_data="settings",
+                    )
+                ],
+            ]),
+        )
+
+        return
+
+    login_states[user_id] = {
+        "step": "phone",
+        "slot": free_slot,
+        "client": None,
+        "phone": None,
+    }
+
+    await update.callback_query.edit_message_text(
+        f"🔐 **Login Telegram Account**\n\n"
+        f"📂 New Slot: **{free_slot}/{MAX_SLOTS}**\n\n"
+        "Apna Telegram phone number bhejo.\n\n"
+        "Example:\n"
+        "`+919876543210`\n\n"
+        "⚠️ OTP sirf isi private bot chat me bhejna.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "❌ Cancel",
+                    callback_data="cancel_login",
+                )
+            ]
+        ]),
+    )
+
+
+# ============================================================
+# START TELEGRAM LOGIN
+# ============================================================
+
+async def start_telegram_login(user_id, phone):
+
+    client = TelegramClient(
+        StringSession(),
+        int(API_ID),
+        API_HASH,
+    )
+
+    await client.connect()
+
+    sent = await client.send_code_request(phone)
+
+    login_states[user_id]["client"] = client
+    login_states[user_id]["phone"] = phone
+    login_states[user_id]["phone_code_hash"] = sent.phone_code_hash
+    login_states[user_id]["step"] = "otp"
+
+    return client
+
+
+# ============================================================
+# HANDLE LOGIN MESSAGE
+# ============================================================
+
+async def handle_login_message(update, context):
+
+    user = update.effective_user
+
+    if not user:
+        return False
+
+    user_id = user.id
+
+    state = login_states.get(user_id)
+
+    if not state:
+        return False
+
+    text = update.message.text.strip()
+
+    step = state.get("step")
+
+    # --------------------------------------------------------
+    # PHONE
+    # --------------------------------------------------------
+
+    if step == "phone":
+
+        phone = text.replace(" ", "")
+
+        if not phone.startswith("+"):
+
+            await update.message.reply_text(
+                "❌ Phone number country code ke saath bhejo.\n\n"
+                "Example: `+919876543210`",
+                parse_mode="Markdown",
+            )
+
+            return True
+
+        try:
+
+            await update.message.reply_text(
+                "⏳ Login request bhej raha hoon..."
+            )
+
+            await start_telegram_login(
+                user_id,
+                phone,
+            )
+
+            await update.message.reply_text(
+                "📩 **OTP Sent!**\n\n"
+                "Telegram app me jo login code aaya hai "
+                "wo yahan bhejo.\n\n"
+                "Example: `12345`",
+                parse_mode="Markdown",
+            )
+
+        except Exception as e:
+
+            logger.exception(
+                "Login phone error"
+            )
+
+            login_states.pop(
+                user_id,
+                None,
+            )
+
+            await update.message.reply_text(
+                f"❌ Login start failed:\n`{e}`",
+                parse_mode="Markdown",
+            )
+
+        return True
+
+    # --------------------------------------------------------
+    # OTP
+    # --------------------------------------------------------
+
+    if step == "otp":
+
+        client = state.get("client")
+
+        if not client:
+
+            login_states.pop(
+                user_id,
+                None,
+            )
+
+            await update.message.reply_text(
+                "❌ Login session expire ho gayi. "
+                "Dobara Login Account dabao."
+            )
+
+            return True
+
+        try:
+
+            await client.sign_in(
+                phone=state["phone"],
+                code=text,
+                phone_code_hash=state["phone_code_hash"],
+            )
+
+        except SessionPasswordNeededError:
+
+            state["step"] = "password"
+
+            await update.message.reply_text(
+                "🔐 **2-Step Verification Enabled**\n\n"
+                "Apna Telegram 2FA password bhejo.",
+                parse_mode="Markdown",
+            )
+
+            return True
+
+        except PhoneCodeInvalidError:
+
+            await update.message.reply_text(
+                "❌ OTP galat hai. Dobara OTP bhejo."
+            )
+
+            return True
+
+        except PhoneCodeExpiredError:
+
+            login_states.pop(
+                user_id,
+                None,
+            )
+
+            await update.message.reply_text(
+                "❌ OTP expire ho gaya.\n"
+                "Dobara Login Account se login karo."
+            )
+
+            return True
+
+        except Exception as e:
+
+            logger.exception(
+                "OTP login error"
+            )
+
+            login_states.pop(
+                user_id,
+                None,
+            )
+
+            await update.message.reply_text(
+                f"❌ Login failed:\n`{e}`",
+                parse_mode="Markdown",
+            )
+
+            return True
+
+        await finish_login(
+            update,
+            user_id,
+        )
+
+        return True
+
+    # --------------------------------------------------------
+    # 2FA PASSWORD
+    # --------------------------------------------------------
+
+    if step == "password":
+
+        client = state.get("client")
+
+        if not client:
+
+            login_states.pop(
+                user_id,
+                None,
+            )
+
+            await update.message.reply_text(
+                "❌ Login session expire ho gayi."
+            )
+
+            return True
+
+        try:
+
+            await client.sign_in(
+                password=text
+            )
+
+        except PasswordHashInvalidError:
+
+            await update.message.reply_text(
+                "❌ 2FA password galat hai. Dobara bhejo."
+            )
+
+            return True
+
+        except Exception as e:
+
+            logger.exception(
+                "2FA login error"
+            )
+
+            login_states.pop(
+                user_id,
+                None,
+            )
+
+            await update.message.reply_text(
+                f"❌ 2FA login failed:\n`{e}`",
+                parse_mode="Markdown",
+            )
+
+            return True
+
+        await finish_login(
+            update,
+            user_id,
+        )
+
+        return True
+
+    return False
+
+
+# ============================================================
+# FINISH LOGIN
+# ============================================================
+
+async def finish_login(update, user_id):
+
+    state = login_states.get(user_id)
+
+    if not state:
+        return
+
+    client = state.get("client")
+    slot = state.get("slot")
+    phone = state.get("phone")
+
+    try:
+
+        me = await client.get_me()
+
+        session_string = client.session.save()
+
+        account_name = (
+            " ".join(
+                filter(
+                    None,
+                    [
+                        me.first_name,
+                        me.last_name,
+                    ],
+                )
+            )
+            or me.username
+            or str(me.id)
+        )
+
+        save_user_session(
+            user_id=user_id,
+            slot_number=slot,
+            phone=phone,
+            session_string=session_string,
+            account_name=account_name,
+        )
+
+        set_active_slot(
+            user_id,
+            slot,
+        )
+
+        set_slot_stopped(
+            user_id,
+            slot,
+            0,
+        )
+
+        await client.disconnect()
+
+        login_states.pop(
+            user_id,
+            None,
+        )
+
+        await update.message.reply_text(
+            "✅ **Telegram Account Login Successful!**\n\n"
+            f"📂 Slot: **{slot}/{MAX_SLOTS}**\n"
+            f"👤 Account: **{account_name}**\n"
+            f"🆔 Telegram ID: `{me.id}`\n"
+            f"📱 Phone: `{phone}`\n\n"
+            "⭐ Ye account ab active account hai.\n\n"
+            "🔄 Aap maximum **20 accounts** login rakh sakte ho.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "🔄 Switch Account",
+                        callback_data="accounts",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "⚙️ Settings",
+                        callback_data="settings",
+                    )
+                ],
+            ]),
+        )
+
+    except Exception as e:
+
+        logger.exception(
+            "Finish login error"
+        )
+
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+
+        login_states.pop(
+            user_id,
+            None,
+        )
+
+        await update.message.reply_text(
+            f"❌ Account save failed:\n`{e}`",
+            parse_mode="Markdown",
+        )
+
+
+# ============================================================
+# CANCEL LOGIN
+# ============================================================
+
+async def cancel_login(update, context):
+
+    user_id = update.effective_user.id
+
+    state = login_states.pop(
+        user_id,
+        None,
+    )
+
+    if state:
+
+        client = state.get("client")
+
+        if client:
+
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+
+    await accounts_page(
+        update,
+        context,
+    )
+
+
+# ============================================================
+# SWITCH ACCOUNT
+# ============================================================
+
+async def switch_account(update, context, slot):
+
+    user_id = update.effective_user.id
+
+    sessions = get_user_sessions(user_id)
+
+    found = None
+
+    for row in sessions:
+
+        if int(row[0]) == int(slot):
+
+            found = row
+            break
+
+    if not found:
+
+        await update.callback_query.answer(
+            "❌ Account slot nahi mila.",
+            show_alert=True,
+        )
+
+        return
+
+    set_active_slot(
+        user_id,
+        slot,
+    )
+
+    set_slot_stopped(
+        user_id,
+        slot,
+        0,
+    )
+
+    account_name = found[3] or "Unknown"
+
+    await update.callback_query.answer(
+        f"✅ Slot {slot} active ho gaya.",
+        show_alert=True,
+    )
+
+    await accounts_page(
+        update,
+        context,
+    )
+
+
+# ============================================================
+# REMOVE ACCOUNT PAGE
+# ============================================================
+
+async def remove_account_page(update, context):
+
+    user_id = update.effective_user.id
+
+    sessions = get_user_sessions(user_id)
+
+    if not sessions:
+
+        await update.callback_query.answer(
+            "❌ Koi account login nahi hai.",
+            show_alert=True,
+        )
+
+        return
+
+    keyboard = []
+
+    for slot, phone, session_string, account_name, stopped in sessions:
+
+        name = account_name or phone or f"Slot {slot}"
+
+        keyboard.append([
+            InlineKeyboardButton(
+                f"🗑️ Slot {slot} • {name}",
+                callback_data=f"delete_{slot}",
+            )
+        ])
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "🔙 Back",
+            callback_data="accounts",
+        )
+    ])
+
+    await update.callback_query.edit_message_text(
+        "🗑️ **Remove Account**\n\n"
+        "Jis account ko remove karna hai select karo:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+# ============================================================
+# DELETE ACCOUNT
+# ============================================================
+
+async def delete_account(update, context, slot):
+
+    user_id = update.effective_user.id
+
+    session = get_slot_session(
+        user_id,
+        slot,
+    )
+
+    if not session:
+
+        await update.callback_query.answer(
+            "❌ Account nahi mila.",
+            show_alert=True,
+        )
+
+        return
+
+    remove_user_session(
+        user_id,
+        slot,
+    )
+
+    active = get_active_slot(
+        user_id
+    )
+
+    if active == slot:
+
+        sessions = get_user_sessions(
+            user_id
+        )
+
+        if sessions:
+
+            new_active = int(
+                sessions[0][0]
+            )
+
+            set_active_slot(
+                user_id,
+                new_active,
+            )
+
+    await update.callback_query.answer(
+        f"✅ Slot {slot} remove ho gaya.",
+        show_alert=True,
+    )
+
+    await accounts_page(
+        update,
+        context,
+    )
+
+
+# ============================================================
 # MAIN KEYBOARD
 # ============================================================
 
@@ -285,6 +1080,16 @@ def main_keyboard(user_id):
             InlineKeyboardButton(
                 "⚙️ Settings",
                 callback_data="settings",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "🔐 Login Account",
+                callback_data="login_account",
+            ),
+            InlineKeyboardButton(
+                "🔄 Switch Account",
+                callback_data="accounts",
             ),
         ],
         [
@@ -393,6 +1198,7 @@ async def start(update, context):
         "⚡ Fast & Reliable Configuration\n"
         "📊 Live Analytics\n"
         "🎁 Referral Trial System\n\n"
+        "👤 **Maximum 20 Telegram Accounts Supported**\n\n"
         "👇 **Main Menu:**"
     )
 
@@ -491,6 +1297,8 @@ async def status_command(update, context):
         if group[2] == 1
     )
 
+    sessions = get_user_sessions(user_id)
+
     sent = forwarded_counts.get(
         user_id,
         0,
@@ -512,7 +1320,8 @@ async def status_command(update, context):
     text = (
         "📊 **AdsNova Pro - Live Analytics**\n\n"
         f"🆔 User ID: `{user_id}`\n"
-        f"📂 Active Slot: {active_slot}\n"
+        f"👤 Logged Accounts: `{len(sessions)}/{MAX_SLOTS}`\n"
+        f"📂 Active Slot: `{active_slot}`\n"
         f"🔐 Account Status: {account_status}\n"
         f"🏷️ Account Name: {account_name}\n\n"
         f"💎 Subscription: {sub_label}\n"
@@ -527,6 +1336,12 @@ async def status_command(update, context):
     )
 
     keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "🔄 Switch Account",
+                callback_data="accounts",
+            )
+        ],
         [
             InlineKeyboardButton(
                 "🔙 Back to Menu",
@@ -629,11 +1444,19 @@ async def logout_command(update, context):
     if not has_access(user_id):
         return
 
+    sessions = get_user_sessions(user_id)
+
+    if not sessions:
+
+        await update.message.reply_text(
+            "❌ Koi logged-in account nahi hai."
+        )
+
+        return
+
     await update.message.reply_text(
-        "ℹ️ Account login/logout ko is safe version "
-        "me bot ke through handle nahi kiya jata.\n\n"
-        "Aap Settings me apna forwarding configuration "
-        "manage kar sakte hain."
+        "👤 Account manage karne ke liye "
+        "main menu me **🔄 Switch Account** use karo."
     )
 
 
@@ -779,6 +1602,16 @@ async def settings_page(update, context):
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton(
+                "🔐 Login Account",
+                callback_data="login_account",
+            ),
+            InlineKeyboardButton(
+                "🔄 Switch Account",
+                callback_data="accounts",
+            )
+        ],
+        [
+            InlineKeyboardButton(
                 "📢 Source Channel",
                 callback_data="opt_1",
             )
@@ -810,7 +1643,8 @@ async def settings_page(update, context):
     ])
 
     await update.callback_query.edit_message_text(
-        "⚙️ **AdsNova Pro Settings**",
+        "⚙️ **AdsNova Pro Settings**\n\n"
+        "👤 Maximum Accounts: **20**",
         parse_mode="Markdown",
         reply_markup=keyboard,
     )
@@ -833,6 +1667,12 @@ async def source_channel_page(update, context):
             "Pehle Telegram account login karke "
             "channels refresh karein.",
             reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "🔄 Switch Account",
+                        callback_data="accounts",
+                    )
+                ],
                 [
                     InlineKeyboardButton(
                         "🔙 Back",
@@ -999,13 +1839,15 @@ async def help_page(update, context):
     text = (
         "💡 **AdsNova Pro Help Centre**\n\n"
         "1️⃣ Subscription active karein.\n"
-        "2️⃣ Telegram account configure karein.\n"
-        "3️⃣ Source channel select karein.\n"
-        "4️⃣ Target groups select karein.\n"
-        "5️⃣ Posting interval choose karein.\n"
-        "6️⃣ Status page se configuration check karein.\n\n"
-        "🔐 Security: Apna OTP ya 2FA password "
-        "sirf trusted login flow me hi enter karein.\n\n"
+        "2️⃣ Telegram account login karein.\n"
+        "3️⃣ Maximum 20 accounts login rakh sakte hain.\n"
+        "4️⃣ Switch Account se active account change karein.\n"
+        "5️⃣ Source channel select karein.\n"
+        "6️⃣ Target groups select karein.\n"
+        "7️⃣ Posting interval choose karein.\n"
+        "8️⃣ Status page se configuration check karein.\n\n"
+        "🔐 Security: OTP aur 2FA password sirf "
+        "apne trusted bot flow me enter karein.\n\n"
         f"📞 Admin: @{ADMIN_CONTACT_USERNAME}"
     )
 
@@ -1374,6 +2216,115 @@ async def button_handler(update, context):
 
         return
 
+    # Login Account
+    if data == "login_account":
+
+        if not has_access(user_id):
+
+            await show_subscription_required(
+                update,
+                context,
+            )
+
+            return
+
+        await login_page(
+            update,
+            context,
+        )
+
+        return
+
+    # Accounts / Switch
+    if data == "accounts":
+
+        if not has_access(user_id):
+
+            await show_subscription_required(
+                update,
+                context,
+            )
+
+            return
+
+        await accounts_page(
+            update,
+            context,
+        )
+
+        return
+
+    # Cancel login
+    if data == "cancel_login":
+
+        await cancel_login(
+            update,
+            context,
+        )
+
+        return
+
+    # Remove account page
+    if data == "remove_account":
+
+        await remove_account_page(
+            update,
+            context,
+        )
+
+        return
+
+    # Switch account
+    if data.startswith("switch_"):
+
+        try:
+
+            slot = int(
+                data.split("_", 1)[1]
+            )
+
+            if slot < 1 or slot > MAX_SLOTS:
+                raise ValueError
+
+            await switch_account(
+                update,
+                context,
+                slot,
+            )
+
+        except Exception as e:
+
+            await query.answer(
+                f"❌ Error: {e}",
+                show_alert=True,
+            )
+
+        return
+
+    # Delete account
+    if data.startswith("delete_"):
+
+        try:
+
+            slot = int(
+                data.split("_", 1)[1]
+            )
+
+            await delete_account(
+                update,
+                context,
+                slot,
+            )
+
+        except Exception as e:
+
+            await query.answer(
+                f"❌ Error: {e}",
+                show_alert=True,
+            )
+
+        return
+
     # Main menu
     if data == "main_menu":
 
@@ -1709,6 +2660,18 @@ async def handle_message(update, context):
     user_id = user.id
     text = update.message.text.strip()
 
+    # LOGIN FLOW FIRST
+    if user_id in login_states:
+
+        handled = await handle_login_message(
+            update,
+            context,
+        )
+
+        if handled:
+            return
+
+    # ADMIN SUBSCRIPTION FLOW
     if (
         is_admin(user_id)
         and user_id in admin_sub_target
