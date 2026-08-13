@@ -41,6 +41,9 @@ async def admin_command(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
+    if update.effective_user is None:
+        return
+
     if update.effective_user.id != ADMIN_ID:
         return
 
@@ -71,7 +74,13 @@ async def admin_command(
         ]
     ])
 
-    await update.message.reply_text(
+    # Command aur callback dono cases mein kaam karega
+    message = update.effective_message
+
+    if message is None:
+        return
+
+    await message.reply_text(
         admin_text,
         parse_mode="Markdown",
         reply_markup=reply_markup
@@ -90,9 +99,14 @@ async def addsub_command(
     if update.effective_user.id != ADMIN_ID:
         return
 
+    message = update.effective_message
+
+    if message is None:
+        return
+
     if not context.args:
 
-        await update.message.reply_text(
+        await message.reply_text(
             "❌ Usage: `/addsub <user_id> [days]`",
             parse_mode="Markdown"
         )
@@ -116,7 +130,7 @@ async def addsub_command(
             days=days
         )
 
-        await update.message.reply_text(
+        await message.reply_text(
             f"✅ User `{target_id}` ko **{days} din** "
             "ka paid subscription successfully mil gaya!",
             parse_mode="Markdown"
@@ -124,7 +138,7 @@ async def addsub_command(
 
     except Exception as e:
 
-        await update.message.reply_text(
+        await message.reply_text(
             f"❌ Error: {e}"
         )
 
@@ -141,9 +155,14 @@ async def delsub_command(
     if update.effective_user.id != ADMIN_ID:
         return
 
+    message = update.effective_message
+
+    if message is None:
+        return
+
     if not context.args:
 
-        await update.message.reply_text(
+        await message.reply_text(
             "❌ Usage: `/delsub <user_id>`",
             parse_mode="Markdown"
         )
@@ -160,7 +179,7 @@ async def delsub_command(
             target_id
         )
 
-        await update.message.reply_text(
+        await message.reply_text(
             f"❌ User `{target_id}` ka subscription "
             "hata diya gaya.",
             parse_mode="Markdown"
@@ -168,7 +187,7 @@ async def delsub_command(
 
     except Exception as e:
 
-        await update.message.reply_text(
+        await message.reply_text(
             f"❌ Error: {e}"
         )
 
@@ -199,9 +218,14 @@ async def userstats_command(
         else {}
     )
 
+    message = update.effective_message
+
+    if message is None:
+        return
+
     if not forwarded_counts and not failed_counts:
 
-        await update.message.reply_text(
+        await message.reply_text(
             "📊 Abhi tak kisi user ne session start "
             "karke messages forward nahi kiye hain."
         )
@@ -235,7 +259,7 @@ async def userstats_command(
             f"⚠️ Failed: {fail}\n\n"
         )
 
-    await update.message.reply_text(
+    await message.reply_text(
         stats_msg,
         parse_mode="Markdown"
     )
@@ -253,9 +277,14 @@ async def broadcast_command(
     if update.effective_user.id != ADMIN_ID:
         return
 
+    message = update.effective_message
+
+    if message is None:
+        return
+
     if not context.args:
 
-        await update.message.reply_text(
+        await message.reply_text(
             "❌ Usage:\n"
             "`/broadcast Your message here`",
             parse_mode="Markdown"
@@ -322,7 +351,7 @@ async def broadcast_command(
 
             continue
 
-    await update.message.reply_text(
+    await message.reply_text(
         "✅ **Broadcast Complete!**\n\n"
         f"📨 Sent: {sent_count}\n"
         f"❌ Failed: {failed_count}",
@@ -383,7 +412,15 @@ async def handle_admin_subscription_message(
     if state.get("step") != "waiting_target_id":
         return False
 
-    text = update.message.text.strip()
+    message = update.effective_message
+
+    if message is None:
+        return False
+
+    if not message.text:
+        return False
+
+    text = message.text.strip()
 
     try:
 
@@ -391,7 +428,7 @@ async def handle_admin_subscription_message(
 
     except ValueError:
 
-        await update.message.reply_text(
+        await message.reply_text(
             "❌ Kripya valid numeric User ID bhejein:"
         )
 
@@ -427,7 +464,7 @@ async def handle_admin_subscription_message(
         ]
     ]
 
-    await update.message.reply_text(
+    await message.reply_text(
         f"✅ Target User ID: `{target_id}`\n\n"
         "Ab niche diye gaye plans mein se "
         "koi ek select karein:",
@@ -459,10 +496,14 @@ async def handle_admin_plan(
         "180": 180
     }
 
-    days_val = days_map.get(
-        data.split("_")[2],
-        30
-    )
+    try:
+        plan_key = data.split("_")[2]
+        days_val = days_map.get(
+            plan_key,
+            30
+        )
+    except Exception:
+        days_val = 30
 
     target_data = admin_sub_target.get(
         user_id,
