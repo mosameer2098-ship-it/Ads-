@@ -1377,7 +1377,6 @@ async def user_status_command(update, context):
             parse_mode="Markdown",
             reply_markup=keyboard,
         )
-
     else:
         await update.message.reply_text(
             text,
@@ -1385,27 +1384,22 @@ async def user_status_command(update, context):
             reply_markup=keyboard,
         )
 
-
 # ============================================================
 # STATUS ROUTER
 # ============================================================
-
 async def status_command(update, context):
     """
     IMPORTANT:
     Admin -> Admin Live Status
     Normal User -> Personal User Status
     """
-
     user_id = update.effective_user.id
-
     if is_admin(user_id):
         await admin_stats(
             update,
             context,
         )
         return
-
     await user_status_command(
         update,
         context,
