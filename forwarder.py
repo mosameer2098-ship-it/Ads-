@@ -115,56 +115,73 @@ async def close_all_clients():
 # ============================================================
 
 async def find_source_entity(client, source_channel):
-
     if not source_channel:
         return None
 
-    source_channel = str(
-        source_channel
-    ).strip()
+    source_channel = str(source_channel).strip()
 
     # --------------------------------------------------------
     # NUMERIC TELEGRAM ID
     # --------------------------------------------------------
+    if source_channel.lstrip("-").isdigit():
+        channel_id = int(source_channel)
 
-    try:
+        # First try the exact entity from the SAME user session.
+        try:
+            entity = await client.get_entity(channel_id)
+            if entity:
+                return entity
+        except Exception:
+            pass
 
-        if source_channel.lstrip("-").isdigit():
+        # ----------------------------------------------------
+        # PRIVATE CHANNEL FALLBACK
+        # Search the logged-in user's dialogs.
+        # This works for private channels the user can access.
+        # ----------------------------------------------------
+        try:
+            dialogs = await client.get_dialogs(limit=None)
 
-            return await client.get_entity(
-                int(source_channel)
+            for dialog in dialogs:
+                entity = dialog.entity
+
+                try:
+                    if int(dialog.id) == channel_id:
+                        return entity
+                except Exception:
+                    pass
+
+                try:
+                    if int(getattr(entity, "id", 0)) == channel_id:
+                        return entity
+                except Exception:
+                    pass
+
+        except Exception as e:
+            logger.warning(
+                "Dialog source search failed: %s",
+                e,
             )
 
-    except Exception:
-        pass
+        return None
 
     # --------------------------------------------------------
     # USERNAME
     # --------------------------------------------------------
+    username = source_channel
+    if not username.startswith("@"):
+        username = "@" + username
 
     try:
-
-        username = source_channel
-
-        if not username.startswith("@"):
-            username = "@" + username
-
-        return await client.get_entity(
-            username
-        )
-
+        return await client.get_entity(username)
     except Exception:
         pass
 
     # --------------------------------------------------------
     # SEARCH DIALOGS BY TITLE
     # --------------------------------------------------------
-
     try:
-
-        dialogs = await client.get_dialogs(
-            limit=None
-        )
+        dialogs = await client.get_dialogs(limit=None)
 
         needle = (
             source_channel
@@ -173,26 +190,22 @@ async def find_source_entity(client, source_channel):
         )
 
         for dialog in dialogs:
-
             title = getattr(
                 dialog,
                 "title",
                 None,
             )
 
-            if title and needle in title.lower():
-
+            if title and needle == title.lower():
                 return dialog.entity
 
     except Exception as e:
-
         logger.warning(
-            "Dialog source search failed: %s",
+            "Dialog title search failed: %s",
             e,
         )
 
     return None
-
 
 # ============================================================
 # SELECTED GROUPS
